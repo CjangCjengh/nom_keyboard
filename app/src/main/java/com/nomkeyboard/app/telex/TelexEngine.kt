@@ -503,10 +503,21 @@ object TelexEngine {
         val rewritten = applyClusterW(composing, syllableStart)
         if (rewritten != null) return rewritten
 
-        // No cluster match – append a literal 'w'. If the syllable had no letters at all,
-        // fall through to the caller which emits a standalone "ư".
-        if (composing.substring(syllableStart).any { it.isLetter() }) {
-            return composing + literalW
+        // No cluster match – decide whether to append a literal 'w' or an ư.
+        //   - Syllable has letters but NO vowel yet (pure consonant onset like "ng", "nh",
+        //     "th", "ch", "kh", "ph", "tr", "gh") -> the w serves as the vowel ư, so we
+        //     append ư (case follows the trigger): "ng" + w -> "ngư", "Nh" + W -> "NhƯ".
+        //   - Syllable has letters AND at least one vowel but no cluster rule matched ->
+        //     append a literal 'w' as before.
+        //   - Syllable has no letters at all -> fall through to the caller which emits a
+        //     standalone "ư".
+        val syllableRest = composing.substring(syllableStart)
+        if (syllableRest.any { it.isLetter() }) {
+            return if (syllableRest.none { it.isVowelLike() }) {
+                composing + if (triggerUpper) 'Ư' else 'ư'
+            } else {
+                composing + literalW
+            }
         }
         return null
     }
