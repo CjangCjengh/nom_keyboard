@@ -163,7 +163,7 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         val tail = if (lastSpace >= 0) composing.substring(lastSpace + 1) else composing
         // Tone-placement style: "old" = traditional (hóa / thúy), "new" = modern (hoá / thuý).
         // Only affects open-syllable diphthongs; closed syllables are unambiguous.
-        val toneStyleOld = prefs.getString("pref_tone_style", "old") != "new"
+        val toneStyleOld = prefs.getString("pref_tone_style", "new") == "old"
         val newTail = TelexEngine.apply(tail, ch, toneStyleOld)
         composing = head + newTail
         updateComposing()
@@ -349,7 +349,7 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
      */
     private fun maybeAutoShift() {
         if (!::keyboardView.isInitialized) return
-        if (!prefs.getBoolean("pref_auto_caps", true)) return
+        if (!prefs.getBoolean("pref_auto_caps", false)) return
         val ei = currentInputEditorInfo ?: return
         // Respect the editor's own opinion on auto-capitalisation.
         val klass = ei.inputType and EditorInfo.TYPE_MASK_CLASS

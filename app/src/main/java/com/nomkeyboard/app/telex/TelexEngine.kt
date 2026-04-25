@@ -267,8 +267,82 @@ object TelexEngine {
             }
         }
 
+        // 2b. Tone relocation. The incoming char is not a tone trigger and didn't match any
+        //     merge rule above, so it will be appended literally. But if the syllable
+        //     ALREADY carries a tone and appending [ch] changes which vowel position is the
+        //     "correct" carrier (per current orthography rules), we must move the tone to
+        //     the new carrier. Two classic scenarios this fixes:
+        //
+        //       (new style) "thủ" + 'y' -> "thuỷ"   (open diphthong uy: tone moves u -> y)
+        //       (old style) "búy" + 't' -> "buýt"   (syllable closes:  tone moves u -> y)
+        //
+        //     Generic recipe:
+        //       - find the currently toned vowel (if any);
+        //       - build the hypothetical buffer = composing + ch with the tone stripped
+        //         from its old position;
+        //       - ask findToneTargetIndex where the tone SHOULD live on that buffer;
+        //       - if it's a different index, relocate.
+        if (ch.isLetter()) {
+            val relocated = relocateTone(composing, ch, toneStyleOld)
+            if (relocated != null) return relocated
+        }
+
         // 3. Default: append the character as-is
         return composing + ch
+    }
+
+    /**
+     * Attempts to move an existing tone mark to a new vowel when appending [ch] changes the
+     * canonical tone-bearing position.
+     *
+     * Returns the new buffer if relocation happened, or null to let the caller fall through
+     * to the default "append as-is" behaviour.
+     *
+     * Scope: only considers the last syllable (anything after the most recent non-letter).
+     * Silently bails out when the (composing + ch) last syllable is not a well-formed
+     * Vietnamese shape so foreign words stay intact.
+     */
+    private fun relocateTone(composing: String, ch: Char, toneStyleOld: Boolean): String? {
+        // Locate the currently-toned vowel inside the last syllable only.
+        var syllableStart = composing.length
+        for (i in composing.indices.reversed()) {
+            if (!composing[i].isLetter()) break
+            syllableStart = i
+        }
+        if (syllableStart >= composing.length) return null
+        var oldToneIdx = -1
+        var oldToneNum = 0
+        for (i in syllableStart until composing.length) {
+            val entry = toneReverse[composing[i]] ?: continue
+            if (entry.second != 0) {
+                oldToneIdx = i
+                oldToneNum = entry.second
+                break
+            }
+        }
+        if (oldToneIdx < 0) return null
+
+        // Hypothetical buffer: strip the tone from its current position and append ch.
+        val oldTonedCh = composing[oldToneIdx]
+        val oldBase = toneReverse[oldTonedCh]!!.first
+        val stripped = StringBuilder(composing).apply { setCharAt(oldToneIdx, oldBase) }.append(ch).toString()
+
+        // Only reconsider tone placement when the resulting last syllable is still a legal
+        // Vietnamese shape – otherwise the user is likely typing a non-Vietnamese word and
+        // we shouldn't move diacritics around.
+        if (!isLastSyllablePhonotacticallyValid(stripped)) return null
+
+        val newIdx = findToneTargetIndex(stripped, toneStyleOld)
+        if (newIdx < 0 || newIdx == oldToneIdx) return null
+
+        // Relocate: put the same tone onto the vowel at newIdx, preserving any existing
+        // hat/horn/breve modification on that vowel.
+        val targetCh = stripped[newIdx]
+        val targetBase = toneReverse[targetCh]?.first ?: targetCh
+        val arr = toneMap[targetBase] ?: return null
+        val sb = StringBuilder(stripped)
+        sb.setCharAt(newIdx, arr[oldToneNum])
+        return sb.toString()
     }
 
     /**
@@ -364,19 +438,6 @@ object TelexEngine {
      * Returns null when the caller should fall back to the "append standalone ư" branch.
      */
     private fun rewriteHornForW(composing: String, triggerUpper: Boolean): String? {
-        // Case 1: consecutive "uo" at the tail – rewrite both to ươ. This remains a direct
-        // two-character merge, independent of any long-distance rules.
-        if (composing.length >= 2) {
-            val c1 = composing[composing.length - 2]
-            val c2 = composing[composing.length - 1]
-            val pair = "${c1}${c2}".lowercase()
-            if (pair == "uo") {
-                val newC1 = if (c1.isUpperCase()) 'Ư' else 'ư'
-                val newC2 = if (c2.isUpperCase()) 'Ơ' else 'ơ'
-                return composing.dropLast(2) + newC1 + newC2
-            }
-        }
-
         val literalW: Char = if (triggerUpper) 'W' else 'w'
 
         // Case 2: bulk undo. If the current syllable already contains ANY w-produced modified
@@ -412,58 +473,152 @@ object TelexEngine {
             return composing.substring(0, syllableStart) + sb.toString() + literalW
         }
 
-        // Case 3: apply. Scan backwards across the syllable, adding the appropriate diacritic
-        // to the first plain u/o/a we find. If we meet a non-w modified vowel (â/ê/ô) or a
-        // toned vowel first, the syllable's nucleus is already decorated – in that case just
-        // append a literal 'w'. This mirrors Gboard / Unikey behaviour.
-        for (i in composing.indices.reversed()) {
-            val c = composing[i]
-            if (!c.isLetter()) break
-            when (c) {
-                // ---- Apply: a plain u/o/a receives the appropriate diacritic ----
-                'o', 'O' -> {
-                    // If the preceding character is u/U, both get the horn (diphthong "ươ").
-                    if (i > 0) {
-                        val prev = composing[i - 1]
-                        if (prev == 'u' || prev == 'U') {
-                            val newPrev = if (prev.isUpperCase()) 'Ư' else 'ư'
-                            val newCur = if (c.isUpperCase()) 'Ơ' else 'ơ'
-                            return composing.substring(0, i - 1) + newPrev + newCur +
-                                    composing.substring(i + 1)
-                        }
-                    }
-                    val repl = if (c.isUpperCase()) 'Ơ' else 'ơ'
-                    return composing.substring(0, i) + repl + composing.substring(i + 1)
-                }
-                'u' -> return composing.substring(0, i) + 'ư' + composing.substring(i + 1)
-                'U' -> return composing.substring(0, i) + 'Ư' + composing.substring(i + 1)
-                'a' -> return composing.substring(0, i) + 'ă' + composing.substring(i + 1)
-                'A' -> return composing.substring(0, i) + 'Ă' + composing.substring(i + 1)
-                else -> {
-                    if (isNonWModifiedVowel(c)) {
-                        // Syllable nucleus is already decorated – append a literal 'w'.
-                        return composing + literalW
-                    }
-                    // Plain consonant – keep scanning further back.
-                }
-            }
+        // Case 3: cluster-based rewrite. Locate the vowel cluster inside the current
+        // syllable (optionally past a gi-/qu- prefix glide), classify its shape, and apply
+        // the horn/breve according to Vietnamese orthography. Tones that already sit on a
+        // cluster vowel are preserved in place.
+        //
+        // Accepted clusters (case-insensitive, after skipping a gi-/qu- prefix) and the
+        // resulting w-target:
+        //     a          -> a gets breve     (ban -> băn, a -> ă, gia -> giă, cha -> chă)
+        //     o          -> o gets horn      (co -> cơ, o -> ơ, gio -> giơ, quo -> quơ)
+        //     u          -> u gets horn      (tu -> tư, u -> ư, giu -> giư, thu -> thư)
+        //     oi         -> o gets horn      (coi -> cơi)
+        //     ui         -> u gets horn      (tui -> tưi)
+        //     ua         -> u gets horn      (ua -> ưa, cua -> cưa, mua -> mưa)
+        //     oa         -> a gets breve     (oa -> oă, hoa -> hoă, gioa -> gioă, qua -> quă)
+        //     uo(+coda)  -> double (u+o both, "ươ")  (buon -> bươn, tuong -> tương, cuoi -> cươi)
+        //
+        // Exception: under the qu- prefix, the "u" belongs to the onset glide and does NOT
+        // participate in a uo double-promotion. Since gi-/qu- glides are stripped before
+        // cluster detection, the remaining cluster is only the post-glide vowels, so the
+        // "quo" case naturally classifies as "o" (single horn) -> "quơ" and "qua" as "a"
+        // (breve) -> "quă". Likewise "gio"/"giu" collapse to "o"/"u" after skipping the
+        // gi- glide.
+        //
+        // Anything NOT in the table above -> literal 'w' (e.g. ao, au, ai, ay, oe, ue,
+        // ia, uy, uya, khuya, bau, bao, cao, bai, tay, tui-y? no, tuy, quy, que, qui,
+        // giao, giau, khuoa, mia, thue, hoe).
+        val rewritten = applyClusterW(composing, syllableStart)
+        if (rewritten != null) return rewritten
+
+        // No cluster match – append a literal 'w'. If the syllable had no letters at all,
+        // fall through to the caller which emits a standalone "ư".
+        if (composing.substring(syllableStart).any { it.isLetter() }) {
+            return composing + literalW
         }
         return null
     }
 
     /**
-     * Returns true if [c] is a vowel that carries a diacritic NOT produced by the 'w' trigger
-     * (i.e. circumflex â/ê/ô, or any toned variant of any vowel). Encountering such a vowel
-     * while scanning for a 'w' rewrite means the syllable's vowel has already been fully
-     * decorated, and the incoming 'w' should be taken literally.
+     * Cluster-based w-rewrite. Inspects the syllable starting at [syllableStart] in
+     * [composing], skips a leading gi-/qu- glide when applicable, locates the first vowel
+     * cluster, classifies its shape by stripping tones/modifiers to base letters, and
+     * applies the horn/breve per Vietnamese orthography. Returns the rewritten buffer or
+     * null if no cluster rule matches (meaning the caller should emit a literal 'w').
      */
-    private fun isNonWModifiedVowel(c: Char): Boolean {
-        // Circumflex vowels (â/ê/ô and uppercase)
-        if (c in "âÂêÊôÔ") return true
-        // Any vowel carrying a tone – look it up in the reverse tone table; a non-zero tone
-        // index means it is toned (and therefore already 'committed' for that syllable).
-        val entry = toneReverse[c] ?: return false
-        return entry.second != 0
+    private fun applyClusterW(composing: String, syllableStart: Int): String? {
+        // Skip a gi-/qu- onset glide (only when there is a vowel after it, matching
+        // glideSkipOffset semantics but scoped to the current syllable).
+        val syllableSub = composing.substring(syllableStart)
+        val postGlideOffset = run {
+            if (syllableSub.length < 3) return@run 0
+            val c0 = syllableSub[0].lowercaseChar()
+            val c1 = syllableSub[1].lowercaseChar()
+            val hasFurtherVowel = (2 until syllableSub.length).any { syllableSub[it].isVowelLike() }
+            if (!hasFurtherVowel) return@run 0
+            if ((c0 == 'g' && c1 == 'i') || (c0 == 'q' && c1 == 'u')) 2 else 0
+        }
+        val clusterSearchStart = syllableStart + postGlideOffset
+
+        // Locate first vowel run in [clusterSearchStart, end).
+        var clusterStart = -1
+        var clusterEnd = -1 // exclusive
+        var i = clusterSearchStart
+        while (i < composing.length) {
+            if (composing[i].isVowelLike()) { clusterStart = i; break }
+            i++
+        }
+        if (clusterStart < 0) return null
+        i = clusterStart
+        while (i < composing.length && composing[i].isVowelLike()) i++
+        clusterEnd = i
+
+        // The cluster must be the ONLY vowel run in the remainder of the syllable – any
+        // later vowel after a consonant means the buffer isn't a canonical Vietnamese
+        // syllable and we shouldn't try to rewrite.
+        while (i < composing.length) {
+            if (composing[i].isVowelLike()) return null
+            i++
+        }
+
+        // Build the lowercase base-letter form of the cluster (strip tone and horn/breve/
+        // circumflex). If ANY cluster vowel isn't in {a, o, u, e, i, y} at its base, we
+        // can still handle it as long as it matches one of the base-cluster keys below;
+        // otherwise fall through.
+        val baseChars = StringBuilder(clusterEnd - clusterStart)
+        for (k in clusterStart until clusterEnd) {
+            val ch = composing[k]
+            val base = (toneReverse[ch]?.first ?: ch).lowercaseChar()
+            val plain = when (base) {
+                'ă', 'â' -> 'a'
+                'ê' -> 'e'
+                'ô', 'ơ' -> 'o'
+                'ư' -> 'u'
+                else -> base
+            }
+            baseChars.append(plain)
+        }
+        val clusterKey = baseChars.toString()
+
+        // Decide the per-position action: for each cluster index (0-based), either leave
+        // untouched, add horn (o->ơ, u->ư), or add breve (a->ă). Null action means this
+        // cluster isn't eligible for w-rewrite (caller emits literal 'w').
+        // Action codes: 0 = keep, 1 = horn, 2 = breve.
+        val actions: IntArray? = when (clusterKey) {
+            "a" -> intArrayOf(2)
+            "o" -> intArrayOf(1)
+            "u" -> intArrayOf(1)
+            "oi" -> intArrayOf(1, 0)
+            "ui" -> intArrayOf(1, 0)
+            "ua" -> intArrayOf(1, 0)
+            "oa" -> intArrayOf(0, 2)
+            "uo" -> intArrayOf(1, 1)
+            "uoi" -> intArrayOf(1, 1, 0)
+            else -> null
+        }
+        if (actions == null) return null
+
+        // If any cluster vowel already carries the TARGET w-modification (ă/ơ/ư), we
+        // shouldn't get here – Case 2 (bulk undo) would have fired first. But if a vowel
+        // already has a non-w modification (â/ê/ô, possibly toned like ố/ế/ấ) the w can't
+        // land on it: emit literal.
+        for (k in clusterStart until clusterEnd) {
+            val ch = composing[k]
+            val base = toneReverse[ch]?.first ?: ch
+            if (base in "âÂêÊôÔ") return null
+        }
+
+        val sb = StringBuilder(composing)
+        for ((idx, act) in actions.withIndex()) {
+            if (act == 0) continue
+            val pos = clusterStart + idx
+            val ch = composing[pos]
+            val entry = toneReverse[ch]
+            val tone = entry?.second ?: 0
+            val baseCh = entry?.first ?: ch
+            val newBase: Char = when (baseCh) {
+                'a' -> 'ă'; 'A' -> 'Ă'
+                'o' -> if (act == 1) 'ơ' else return null
+                'O' -> if (act == 1) 'Ơ' else return null
+                'u' -> if (act == 1) 'ư' else return null
+                'U' -> if (act == 1) 'Ư' else return null
+                else -> return null
+            }
+            val repl = toneMap[newBase]?.get(tone) ?: return null
+            sb.setCharAt(pos, repl)
+        }
+        return sb.toString()
     }
 
     /**
@@ -520,11 +675,18 @@ object TelexEngine {
      *   3. Otherwise, if the word ends with a consonant, put the tone on the vowel
      *      immediately before the trailing consonant cluster (the "nucleus" rule, e.g.
      *      "toan" -> "toán", "hoang" -> "hoàng").
-     *   4. Otherwise (open syllable, i.e. last char is a vowel), the behaviour depends on
-     *      [toneStyleOld]:
-     *        - old (traditional): tone on the SECOND-to-last vowel -> "hóa", "hòe", "thúy".
-     *        - new (modern):      tone on the LAST vowel          -> "hoá", "hoè", "thuý".
+     *   4. Otherwise (open syllable, i.e. last char is a vowel) the choice depends on the
+     *      diphthong shape:
+     *        - FALLING diphthongs ending in a glide (ai, ay, ao, au, eo, êu, iu, ơi, ưi, ...):
+     *          the tone ALWAYS goes on the first vowel (the nucleus) -> "gái", "sáo", "éo".
+     *          No one writes "gaí" in any tradition.
+     *        - RISING diphthongs starting with an o/u glide (oa, oe, uy, uê, ...):
+     *          * old (traditional): first vowel  -> "hóa", "hòe", "thúy".
+     *          * new (modern):      second vowel -> "hoá", "hoè", "thuý".
      *   5. Fallback: the last vowel in the buffer.
+     *
+     * [toneStyleOld] only influences rising-diphthong open syllables; everything else is
+     * written identically in both orthographic traditions.
      */
     private fun findToneTargetIndex(s: String, toneStyleOld: Boolean = true): Int {
         // Compute effective "vowel scan start": skip a leading gi-/qu- glide when appropriate.
@@ -554,11 +716,41 @@ object TelexEngine {
         if (vowelIdx.size == 1) return vowelIdx[0]
         val lastVowel = vowelIdx.last()
         val hasTrailingConsonant = lastVowel < s.length - 1
+        if (hasTrailingConsonant) return lastVowel
+
+        // Open-syllable rule. A Vietnamese open syllable with two vowels is either
+        //   (a) a RISING diphthong where the first vowel is a glide (o/u) and the real
+        //       nucleus is the second one – e.g. "hoa", "hoe", "uy", "uê", "quy"+extra.
+        //       Examples: "hoas" -> hóa (old) / hoá (new).
+        //   (b) a FALLING diphthong where the first vowel is the nucleus and the second
+        //       vowel is the off-glide (i/y/o/u) – e.g. "gai", "sao", "eo", "ui", "ôi".
+        //       Examples: "gais" -> gái (ALWAYS, both old and new); "saoj" -> sạo; "ôij" -> ộ... wait,
+        //       ôi already has ô so the priority rule above handles it.
+        //
+        // In case (b) the tone ALWAYS sits on the first vowel (the nucleus), regardless of
+        // the user's orthography preference – no one writes "gaí" / "saó" in either tradition.
+        // In case (a) the old style keeps the tone on the first vowel for visual balance
+        // ("hóa"), while the modern style follows pure phonology and places it on the
+        // nucleus, i.e. the second vowel ("hoá").
+        val firstVowel = vowelIdx[vowelIdx.size - 2]
+        // A rising diphthong (on-glide + real nucleus) is one whose first vowel is an o/u
+        // glide AND whose second vowel is NOT an i/y off-glide... wait, y IS the nucleus in
+        // "uy" (thúy / thuý) – so the only letter that disqualifies is plain 'i'.
+        // Concretely, the Vietnamese rising diphthongs/triphthongs are
+        //     oa  oă  oe           (o-glide + nucleus a/ă/e)
+        //     ua  uâ  uê  uơ  uy   (u-glide + nucleus a/â/ê/ơ/y)
+        // Falling open-syllable diphthongs that also start with o/u are only the -i ones:
+        //     oi  ôi  ơi  ui  ưi   (second vowel is i)
+        // (oo/ou/uo/uu don't appear as standalone open syllables in modern Vietnamese, and
+        // any "uo" input is rewritten to "uơ"/"uô" by the horn rule before we get here.)
+        // So: it's rising iff firstCh ∈ {o,u} AND secondCh is NOT 'i'.
+        val firstCh = s[firstVowel].lowercaseChar()
+        val secondCh = s[lastVowel].lowercaseChar()
+        val isRisingDiphthong = firstCh in "ou" && secondCh != 'i'
         return when {
-            hasTrailingConsonant -> lastVowel
-            // Open syllable: let the user-chosen orthography style decide.
-            toneStyleOld -> vowelIdx[vowelIdx.size - 2] // hóa / hòe / thúy
-            else -> lastVowel                          // hoá / hoè / thuý
+            !isRisingDiphthong -> firstVowel   // falling diphthong: gái, sáo, éo, úi, ối...
+            toneStyleOld -> firstVowel         // rising + old: hóa / hòe / thúy
+            else -> lastVowel                  // rising + new: hoá / hoè / thuý
         }
     }
 

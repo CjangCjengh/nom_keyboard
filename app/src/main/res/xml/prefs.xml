@@ -15,7 +15,7 @@
         android:summary="@string/pref_tone_style_summary"
         android:entries="@array/tone_style_entries"
         android:entryValues="@array/tone_style_values"
-        android:defaultValue="old" />
+        android:defaultValue="new" />
 
     <SwitchPreferenceCompat
         android:key="pref_show_candidates"
@@ -27,7 +27,7 @@
         android:key="pref_auto_caps"
         android:title="@string/pref_auto_caps"
         android:summary="@string/pref_auto_caps_summary"
-        android:defaultValue="true" />
+        android:defaultValue="false" />
 
     <SwitchPreferenceCompat
         android:key="pref_use_nom_font"
