@@ -108,6 +108,18 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         // back to Typeface.DEFAULT when null is passed.
         val useNomFont = prefs.getBoolean("pref_use_nom_font", true)
         candidateBar.setTypeface(if (useNomFont) nomTypeface else null)
+
+        // Keyboard & candidate-bar font size: user pref stored as one of {"s","m","l","xl"};
+        // default "m". The same scale is applied to both surfaces so they always look
+        // visually consistent.
+        val scale = when (prefs.getString("pref_candidate_text_size", "m")) {
+            "s" -> 0.85f
+            "l" -> 1.15f
+            "xl" -> 1.30f
+            else -> 1.0f
+        }
+        candidateBar.setCandidateTextScale(scale)
+        keyboardView.setKeyTextScale(scale)
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {

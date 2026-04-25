@@ -81,8 +81,14 @@ class KeyboardView @JvmOverloads constructor(
     private val keyGap = resources.getDimension(R.dimen.kb_key_gap)
     private val rowGap = resources.getDimension(R.dimen.kb_row_gap)
     private val keyRadius = resources.getDimension(R.dimen.kb_key_radius)
-    private val keyTextSize = resources.getDimension(R.dimen.kb_key_text_size)
-    private val keyLabelTextSize = resources.getDimension(R.dimen.kb_key_label_text_size)
+    // Base font sizes (px). Stored as mutable properties so the IME can apply a user-chosen
+    // scale to both the main letter glyphs and the secondary labels (?123, ABC, space, …).
+    // Whenever we rescale, we also recompute baseKeyTextSize / baseKeyLabelTextSize so the
+    // scale is always applied on top of the original design values (no drift).
+    private val baseKeyTextSize = resources.getDimension(R.dimen.kb_key_text_size)
+    private val baseKeyLabelTextSize = resources.getDimension(R.dimen.kb_key_label_text_size)
+    private var keyTextSize = baseKeyTextSize
+    private var keyLabelTextSize = baseKeyLabelTextSize
     private val sidePad = resources.getDimension(R.dimen.kb_side_pad)
     private val topPad = resources.getDimension(R.dimen.kb_top_pad)
     private val bottomPad = resources.getDimension(R.dimen.kb_bottom_pad)
@@ -96,6 +102,18 @@ class KeyboardView @JvmOverloads constructor(
 
     private var hapticsEnabled: Boolean = true
     fun setHapticsEnabled(v: Boolean) { hapticsEnabled = v }
+
+    /**
+     * Apply a multiplicative scale to the key glyph / secondary-label font sizes. 1.0 = the
+     * resource default. Called from the IME whenever the user changes the "keyboard font size"
+     * preference, so the main QWERTY keys and candidate bar grow / shrink together.
+     */
+    fun setKeyTextScale(scale: Float) {
+        val s = scale.coerceIn(0.6f, 2.0f)
+        keyTextSize = baseKeyTextSize * s
+        keyLabelTextSize = baseKeyLabelTextSize * s
+        invalidate()
+    }
 
     // ----------- Key model -----------
     /** Metadata for a single key. */

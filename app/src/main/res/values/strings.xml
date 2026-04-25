@@ -21,6 +21,8 @@
     <string name="pref_sound_summary">Phát tiếng nhấp khi gõ phím</string>
     <string name="pref_show_candidates">Hiển thị thanh gợi ý chữ Nôm</string>
     <string name="pref_show_candidates_summary">Hiện các chữ Nôm đề xuất phía trên bàn phím, chạm để chọn</string>
+    <string name="pref_candidate_text_size">Cỡ chữ bàn phím</string>
+    <string name="pref_candidate_text_size_summary">Điều chỉnh cỡ chữ trên các phím và trên thanh gợi ý</string>
     <string name="pref_auto_caps">Tự động viết hoa đầu câu</string>
     <string name="pref_auto_caps_summary">Tự bật Shift khi con trỏ ở đầu câu hoặc sau dấu chấm</string>
     <string name="pref_use_nom_font">Dùng phông chữ Nôm có sẵn</string>

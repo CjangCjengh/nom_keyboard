@@ -34,6 +34,8 @@ class CandidateBar @JvmOverloads constructor(
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.LEFT
+        // The composing label uses its own dedicated size so it stays visually calm even if
+        // the main keyboard's key-text size changes later.
         textSize = resources.getDimension(R.dimen.kb_candidate_label_text_size)
     }
     private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -52,6 +54,25 @@ class CandidateBar @JvmOverloads constructor(
 
     fun setTypeface(tf: Typeface?) {
         textPaint.typeface = tf ?: Typeface.DEFAULT
+        invalidate()
+    }
+
+    // Base font sizes (px) read from resources at construction time. We keep them so the
+    // user-adjustable scale can always be applied on top of the original design values
+    // without drift after repeated toggles.
+    private val baseTextSize = resources.getDimension(R.dimen.kb_candidate_text_size)
+    private val baseLabelTextSize = resources.getDimension(R.dimen.kb_candidate_label_text_size)
+
+    /**
+     * Apply a multiplicative scale to both the Nom candidate text and the left-side composing
+     * label. 1.0 = the resource default. Call this whenever the user changes the
+     * "candidate bar font size" preference.
+     */
+    fun setCandidateTextScale(scale: Float) {
+        val s = scale.coerceIn(0.6f, 2.0f)
+        textPaint.textSize = baseTextSize * s
+        labelPaint.textSize = baseLabelTextSize * s
+        layoutCandidates()
         invalidate()
     }
 
@@ -176,7 +197,7 @@ class CandidateBar @JvmOverloads constructor(
                 dragged = false
                 downIndex = findCandidate(x)
                 downOnComposing = downIndex < 0 && !composingRect.isEmpty &&
-                    x >= composingRect.left && x <= composingRect.right
+                        x >= composingRect.left && x <= composingRect.right
                 pressedIndex = downIndex
                 invalidate()
                 parent?.requestDisallowInterceptTouchEvent(true)
