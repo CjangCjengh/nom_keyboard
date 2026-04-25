@@ -83,5 +83,12 @@
             android:layout_height="wrap_content"
             android:text="@string/pref_clear_history"
             android:layout_marginTop="12dp"/>
+
+        <Button
+            android:id="@+id/btn_user_dict"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/user_dict_title"
+            android:layout_marginTop="4dp"/>
     </LinearLayout>
 </ScrollView>

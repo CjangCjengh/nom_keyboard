@@ -21,6 +21,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Quản lý từ điển người dùng -->
+        <activity
+            android:name=".ui.UserDictionaryActivity"
+            android:exported="false"
+            android:label="@string/user_dict_title"
+            android:theme="@style/Theme.NomKeyboard" />
+
         <!-- 输入法服务 -->
         <service
             android:name=".NomInputMethodService"

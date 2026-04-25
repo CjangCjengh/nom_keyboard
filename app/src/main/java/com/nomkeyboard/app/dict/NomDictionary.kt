@@ -85,6 +85,8 @@ object NomDictionary {
         if (query.isEmpty()) return emptyList()
         val q = query.lowercase()
         val result = LinkedHashSet<String>()
+        // User dictionary hits take priority so the user's overrides float to the top.
+        result.addAll(UserDictionary.lookupSingle(q))
         singleMap[q]?.let { result.addAll(it) }
         val qAscii = stripDiacritics(q)
         asciiSingleIndex[qAscii]?.forEach { k ->
@@ -101,6 +103,8 @@ object NomDictionary {
         if (query.isEmpty()) return emptyList()
         val q = query.lowercase()
         val result = LinkedHashSet<String>()
+        // User dictionary hits are prepended so user overrides win over the bundled data.
+        result.addAll(UserDictionary.lookupWord(q))
         wordMap[q]?.let { result.addAll(it) }
         wordMap[q.replace(" ", "")]?.let { result.addAll(it) }
         val qAscii = stripDiacritics(q)
@@ -121,6 +125,8 @@ object NomDictionary {
         val merged = LinkedHashSet<String>()
         merged.addAll(lookupWord(query))
         merged.addAll(lookupSingle(query))
+        // User dictionary prefix matches come first so user-added compound completions win.
+        merged.addAll(UserDictionary.lookupPrefix(query, PREFIX_LIMIT))
         merged.addAll(lookupPrefix(query, PREFIX_LIMIT))
         return merged.toList()
     }

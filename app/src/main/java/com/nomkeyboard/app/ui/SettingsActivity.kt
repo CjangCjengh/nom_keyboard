@@ -2,6 +2,7 @@ package com.nomkeyboard.app.ui
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -33,8 +34,17 @@ class SettingsActivity : AppCompatActivity() {
                 .apply()
             Toast.makeText(this, R.string.cleared, Toast.LENGTH_SHORT).show()
         }
+        findViewById<Button>(R.id.btn_user_dict).setOnClickListener {
+            startActivity(Intent(this, UserDictionaryActivity::class.java))
+        }
         // Focus the test EditText so the keyboard pops up for quick trial.
-        findViewById<EditText>(R.id.et_test).requestFocus()
+        val etTest = findViewById<EditText>(R.id.et_test)
+        try {
+            etTest.typeface = Typeface.createFromAsset(assets, "fonts/HanNomGothic.ttf")
+        } catch (_: Throwable) {
+            // Fall back to the default typeface silently if the font asset is missing.
+        }
+        etTest.requestFocus()
 
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()

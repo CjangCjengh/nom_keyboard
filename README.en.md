@@ -11,8 +11,9 @@ A modernised Chữ Nôm input method for Android. The UI has been redesigned to 
   - Vowel modifiers: `aa → â`, `aw → ă`, `ee → ê`, `oo → ô`, `ow → ơ`, `uw → ư`, `dd → đ`
   - Tone marks: `s` (sắc), `f` (huyền), `r` (hỏi), `x` (ngã), `j` (nặng), `z` (clear tone)
 - **Live Nom character suggestions**: single-syllable dictionary of **6,686** syllables with **25,059** candidates, plus a compound-word dictionary of **1,636** entries (flattened into **2,648** lookup keys). Tap any candidate to commit.
-- **Diacritic-tolerant lookup**: both fully-toned and plain-ASCII queries resolve to the right candidates. For example `chunom`, `chữ nôm`, `chữnôm` all yield **𡦂喃 / 𡨸喃**; `anhquoc` → **英國**; `adiđàphật` → **阿彌陀佛**.
+- **Diacritic-tolerant lookup**: both fully-toned and plain-ASCII queries resolve to the right candidates. For example `chunom`, `chữ nôm`, `chữnôm` all yield **𡦂喃 / 𡨸喃**; `vietnam` → **越南**; `hànội` → **河內**.
 - **Lightweight frequency learning**: recently used Nom characters bubble up in the suggestion bar (persisted in SharedPreferences).
+- **User dictionary**: add, edit or delete your own entries from **Settings ▸ User dictionary**. User entries always take priority over the built-in dictionary, so you can override or extend the defaults. **Import / export** in the same tab-separated `key<TAB>candidate1 candidate2 …` format used by the bundled dictionaries — pick any file via the system file picker, and choose **merge** or **replace** on import.
 - **Light / dark / follow-system** themes.
 - Optional **haptic feedback** and **key sound**.
 - Bundled **Han-Nom Gothic** font (~12 MB) for correct glyph rendering of Nom characters in the candidate bar.

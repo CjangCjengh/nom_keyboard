@@ -16,6 +16,12 @@
         android:defaultValue="true" />
 
     <SwitchPreferenceCompat
+        android:key="pref_auto_caps"
+        android:title="@string/pref_auto_caps"
+        android:summary="@string/pref_auto_caps_summary"
+        android:defaultValue="true" />
+
+    <SwitchPreferenceCompat
         android:key="pref_vibrate"
         android:title="@string/pref_vibrate"
         android:summary="@string/pref_vibrate_summary"

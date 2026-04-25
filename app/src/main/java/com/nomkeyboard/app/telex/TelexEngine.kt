@@ -421,7 +421,7 @@ object TelexEngine {
                             val newPrev = if (prev.isUpperCase()) 'Ư' else 'ư'
                             val newCur = if (c.isUpperCase()) 'Ơ' else 'ơ'
                             return composing.substring(0, i - 1) + newPrev + newCur +
-                                    composing.substring(i + 1)
+                                composing.substring(i + 1)
                         }
                     }
                     val repl = if (c.isUpperCase()) 'Ơ' else 'ơ'

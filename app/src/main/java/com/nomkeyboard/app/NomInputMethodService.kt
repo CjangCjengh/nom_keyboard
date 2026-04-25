@@ -12,6 +12,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import androidx.preference.PreferenceManager
 import com.nomkeyboard.app.dict.NomDictionary
+import com.nomkeyboard.app.dict.UserDictionary
 import com.nomkeyboard.app.telex.TelexEngine
 import com.nomkeyboard.app.ui.CandidateBar
 import com.nomkeyboard.app.ui.KeyboardTheme
@@ -53,6 +54,7 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         super.onCreate()
         prefs = PreferenceManager.getDefaultSharedPreferences(this)
         NomDictionary.ensureLoaded(applicationContext)
+        UserDictionary.ensureLoaded(applicationContext)
         // Load the bundled Han-Nom font; fail-safe to system font if missing
         nomTypeface = try {
             Typeface.createFromAsset(assets, "fonts/HanNomGothic.ttf")
@@ -112,6 +114,24 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         super.onStartInputView(info, restarting)
         resetComposing(commit = false)
         applyTheme()
+        maybeAutoShift()
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int,
+        newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd,
+            newSelStart, newSelEnd,
+            candidatesStart, candidatesEnd
+        )
+        // Caret jumped elsewhere (not a composing-text update). Re-evaluate auto-capitalisation
+        // because the user may have tapped to position the caret at the start of a new line.
+        if (composing.isEmpty() && candidatesStart < 0) {
+            maybeAutoShift()
+        }
     }
 
     override fun onFinishInput() {
@@ -209,9 +229,9 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         // after they pressed space.
         val trimmed = composing.trim()
         val hasExactCandidate = trimmed.isNotEmpty() && (
-                NomDictionary.lookupWord(trimmed).isNotEmpty() ||
-                        NomDictionary.lookupSingle(trimmed).isNotEmpty()
-                )
+            NomDictionary.lookupWord(trimmed).isNotEmpty() ||
+                NomDictionary.lookupSingle(trimmed).isNotEmpty()
+            )
         if (!hasExactCandidate) {
             currentInputConnection?.commitText(trimmed, 1)
             composing = ""
@@ -294,6 +314,7 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         composing = ""
         candidateBar.clear()
         currentInputConnection?.finishComposingText()
+        maybeAutoShift()
     }
 
     private fun resetComposing(commit: Boolean) {
@@ -304,6 +325,62 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
     }
 
     // ============================ Misc helpers ============================
+
+    /**
+     * Turn on one-shot Shift whenever the caret is at the start of a "sentence", provided the
+     * user-preference [pref_auto_caps] is enabled and the current editor doesn't suppress
+     * auto-capitalisation (passwords, URLs, email addresses etc.).
+     *
+     * A caret is considered "at the start of a sentence" when:
+     *   - There is no text before it, OR
+     *   - The preceding non-space character is one of  . ! ? 。 ！ ？  or a newline.
+     *
+     * We consult the InputConnection to peek at the text immediately before the cursor. If the
+     * connection refuses to return anything (some password fields do that) we just leave
+     * Shift alone – a silent no-op is less annoying than a false positive.
+     */
+    private fun maybeAutoShift() {
+        if (!::keyboardView.isInitialized) return
+        if (!prefs.getBoolean("pref_auto_caps", true)) return
+        val ei = currentInputEditorInfo ?: return
+        // Respect the editor's own opinion on auto-capitalisation.
+        val klass = ei.inputType and EditorInfo.TYPE_MASK_CLASS
+        val variation = ei.inputType and EditorInfo.TYPE_MASK_VARIATION
+        if (klass != EditorInfo.TYPE_CLASS_TEXT) return
+        when (variation) {
+            EditorInfo.TYPE_TEXT_VARIATION_PASSWORD,
+            EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+            EditorInfo.TYPE_TEXT_VARIATION_URI,
+            EditorInfo.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            EditorInfo.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS -> return
+        }
+        val ic = currentInputConnection ?: return
+        // Grab up to 64 chars before the cursor – enough to find the last sentence break
+        // without costing much.
+        val before: CharSequence = ic.getTextBeforeCursor(64, 0) ?: ""
+        if (isStartOfSentence(before)) {
+            keyboardView.setShiftTemporary()
+        }
+    }
+
+    /**
+     * @return true iff [before] is empty or ends (after trimming trailing spaces) with a
+     *   sentence-terminating punctuation / newline.
+     */
+    private fun isStartOfSentence(before: CharSequence): Boolean {
+        // Walk backwards past ASCII spaces, tabs and the fullwidth ideographic space.
+        var i = before.length - 1
+        while (i >= 0) {
+            val c = before[i]
+            if (c == ' ' || c == '\t' || c == '\u3000') i-- else break
+        }
+        if (i < 0) return true
+        val c = before[i]
+        return c == '.' || c == '!' || c == '?' ||
+            c == '\u3002' /* 。 */ || c == '\uff01' /* ！ */ || c == '\uff1f' /* ？ */ ||
+            c == '\n' || c == '\r'
+    }
 
     private fun playKeyClickSound() {
         if (!prefs.getBoolean("pref_sound", false)) return

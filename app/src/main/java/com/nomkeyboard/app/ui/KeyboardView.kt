@@ -405,6 +405,21 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     /**
+     * Request a one-shot temporary Shift (single next letter uppercased).
+     *
+     * This is called by the input-method service when auto-capitalisation detects that the
+     * caret is at the start of a sentence. We only override when Shift is currently OFF
+     * (state 0) – if the user already engaged a manual Shift or Caps-Lock we leave their
+     * explicit choice untouched.
+     */
+    fun setShiftTemporary() {
+        if (shift == 0) {
+            shift = 1
+            invalidate()
+        }
+    }
+
+    /**
      * Switch between the letters / ?123 / =\< pages.
      *
      * We explicitly rebuild the key layout and request a re-measure, because the new page may

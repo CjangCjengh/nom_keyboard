@@ -176,7 +176,7 @@ class CandidateBar @JvmOverloads constructor(
                 dragged = false
                 downIndex = findCandidate(x)
                 downOnComposing = downIndex < 0 && !composingRect.isEmpty &&
-                        x >= composingRect.left && x <= composingRect.right
+                    x >= composingRect.left && x <= composingRect.right
                 pressedIndex = downIndex
                 invalidate()
                 parent?.requestDisallowInterceptTouchEvent(true)
