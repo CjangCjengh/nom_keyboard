@@ -534,7 +534,6 @@ object TelexEngine {
 
         // Locate first vowel run in [clusterSearchStart, end).
         var clusterStart = -1
-        var clusterEnd = -1 // exclusive
         var i = clusterSearchStart
         while (i < composing.length) {
             if (composing[i].isVowelLike()) { clusterStart = i; break }
@@ -543,7 +542,7 @@ object TelexEngine {
         if (clusterStart < 0) return null
         i = clusterStart
         while (i < composing.length && composing[i].isVowelLike()) i++
-        clusterEnd = i
+        val clusterEnd = i // exclusive
 
         // The cluster must be the ONLY vowel run in the remainder of the syllable – any
         // later vowel after a consonant means the buffer isn't a canonical Vietnamese
