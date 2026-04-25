@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nom Keyboard</string>
+    <string name="ime_name">Nom Keyboard</string>
+    <string name="subtype_vi">Vietnamese (Chữ Nôm)</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="enable_ime_title">1. Enable keyboard</string>
+    <string name="enable_ime_summary">Open System Settings · Language &amp; input · Manage keyboards, then enable Nom Keyboard</string>
+    <string name="choose_ime_title">2. Choose keyboard</string>
+    <string name="choose_ime_summary">Tap here to show the input method picker and switch to Nom Keyboard</string>
+    <string name="test_input_hint">Type here to try it out…</string>
+
+    <string name="pref_dark_theme">Dark theme</string>
+    <string name="pref_dark_theme_summary">Use a dark background for the keyboard</string>
+    <string name="pref_vibrate">Key vibration</string>
+    <string name="pref_vibrate_summary">Light haptic feedback when pressing keys</string>
+    <string name="pref_sound">Key sound</string>
+    <string name="pref_sound_summary">Play a click sound when pressing keys</string>
+    <string name="pref_show_candidates">Show Nom suggestion bar</string>
+    <string name="pref_show_candidates_summary">Show Nom candidates above the keyboard, tap to commit</string>
+    <string name="pref_clear_history">Clear learned history</string>
+    <string name="pref_clear_history_summary">Forget recently used Nom character frequencies</string>
+    <string name="cleared">Cleared</string>
+</resources>

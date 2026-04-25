@@ -1,0 +1,3 @@
+single_count=6686
+word_raw_count=1636
+word_flat_count=2648

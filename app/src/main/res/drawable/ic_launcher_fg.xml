@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 简易 "喃" 字样式：圆底 + 白色字符 "喃" 的抽象笔画；用简单的白色方块/线条代表 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,36 L72,36 L72,42 L36,42 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,52 L72,52 L72,58 L36,58 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,68 L72,68 L72,74 L36,74 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M51,28 L57,28 L57,80 L51,80 Z" />
+</vector>

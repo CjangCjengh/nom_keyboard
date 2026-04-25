@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <ListPreference
+        android:key="pref_theme_mode"
+        android:title="@string/pref_dark_theme"
+        android:summary="@string/pref_dark_theme_summary"
+        android:entries="@array/theme_entries"
+        android:entryValues="@array/theme_values"
+        android:defaultValue="system" />
+
+    <SwitchPreferenceCompat
+        android:key="pref_show_candidates"
+        android:title="@string/pref_show_candidates"
+        android:summary="@string/pref_show_candidates_summary"
+        android:defaultValue="true" />
+
+    <SwitchPreferenceCompat
+        android:key="pref_vibrate"
+        android:title="@string/pref_vibrate"
+        android:summary="@string/pref_vibrate_summary"
+        android:defaultValue="true" />
+
+    <SwitchPreferenceCompat
+        android:key="pref_sound"
+        android:title="@string/pref_sound"
+        android:summary="@string/pref_sound_summary"
+        android:defaultValue="false" />
+
+</PreferenceScreen>

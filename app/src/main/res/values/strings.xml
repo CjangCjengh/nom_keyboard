@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Bàn phím chữ Nôm</string>
+    <string name="ime_name">Bàn phím Nôm</string>
+    <string name="subtype_vi">Tiếng Việt (chữ Nôm)</string>
+
+    <string name="settings_title">Cài đặt</string>
+    <string name="enable_ime_title">1. Bật bàn phím</string>
+    <string name="enable_ime_summary">Mở Cài đặt hệ thống · Ngôn ngữ và bàn phím · Quản lý bàn phím, rồi bật Bàn phím Nôm</string>
+    <string name="choose_ime_title">2. Chọn bàn phím</string>
+    <string name="choose_ime_summary">Nhấn vào đây để hiện trình chọn bàn phím và chuyển sang Bàn phím Nôm</string>
+    <string name="test_input_hint">Gõ thử ở đây…</string>
+
+    <string name="pref_dark_theme">Giao diện tối</string>
+    <string name="pref_dark_theme_summary">Sử dụng nền tối cho bàn phím</string>
+    <string name="pref_vibrate">Rung khi gõ phím</string>
+    <string name="pref_vibrate_summary">Phản hồi rung nhẹ mỗi khi nhấn phím</string>
+    <string name="pref_sound">Âm thanh phím</string>
+    <string name="pref_sound_summary">Phát tiếng nhấp khi gõ phím</string>
+    <string name="pref_show_candidates">Hiển thị thanh gợi ý chữ Nôm</string>
+    <string name="pref_show_candidates_summary">Hiện các chữ Nôm đề xuất phía trên bàn phím, chạm để chọn</string>
+    <string name="pref_clear_history">Xoá lịch sử học</string>
+    <string name="pref_clear_history_summary">Quên tần suất các chữ Nôm đã dùng gần đây</string>
+    <string name="cleared">Đã xoá</string>
+</resources>
