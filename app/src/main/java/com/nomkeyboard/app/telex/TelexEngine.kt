@@ -272,16 +272,18 @@ object TelexEngine {
     private fun Char.isVowelLike(): Boolean = toneReverse.containsKey(this) || vowels.contains(this)
 
     /**
-     * Apply the horn diacritic in response to the Telex "w" trigger. This covers three cases:
-     *   - The syllable ends with the diphthong "uo" / "uO" / "Uo" / "UO": both vowels receive
-     *     the horn (ươ or its uppercase variants).
-     *   - The syllable contains a plain o/O/u/U somewhere (not necessarily in the last position):
-     *     only the most recent one is rewritten (handles "nguoi" + w -> "nguơi",
-     *     "quang" -> nothing, etc.).
-     * Returns null if no rewrite is applicable and the caller should fall back to normal rules.
+     * Apply the appropriate "w"-trigger rewrite. The Telex 'w' key is overloaded:
+     *   - After (or within a syllable containing) u/o, it adds the horn: u -> ư, o -> ơ.
+     *     When the target is 'o' and the immediately preceding char is 'u', both get the horn
+     *     (the "uo" diphthong becomes "ươ").
+     *   - After (or within a syllable containing) 'a'/'A', it adds the breve: a -> ă.
+     *     This is the standard Telex "aw" rule, and we apply it long-distance too so that
+     *     "ban" + w -> "băn", "tram" + w -> "trăm", etc.
+     *   - Otherwise, null is returned and the caller falls back to appending a standalone ư.
      *
-     * The case of the resulting horn vowel is derived from the scanned character itself, so the
-     * trigger key's own case ('w' vs 'W') is irrelevant here.
+     * The scan is bounded by the current syllable: it stops at the first non-letter char.
+     * The case of the produced modified vowel follows the case of the scanned source vowel,
+     * independent of whether the user pressed 'w' or 'W'.
      */
     private fun rewriteHornForW(composing: String): String? {
         // Case 1: consecutive "uo" at the tail – rewrite both to ươ.
@@ -296,11 +298,12 @@ object TelexEngine {
             }
         }
 
-        // Case 2: scan backwards for the most recent o/u that is still inside the current
-        // syllable (we stop at a non-letter boundary). The target vowel does not have to be at
-        // the very end – e.g. "nguoi" + w should rewrite the "uo" part of "ng-u-o-i" to "ươ",
-        // yielding "ngươi". When the found target is 'o'/'O' AND the character right before
-        // it is 'u'/'U', we add the horn to both (they form a single diphthong).
+        // Case 2: scan backwards for the most recent modifiable vowel (o/u for horn,
+        // a for breve) that is still inside the current syllable; we stop at a non-letter
+        // boundary. The target vowel does not have to be at the very end – e.g.:
+        //     "nguoi" + w -> "ngươi"   (horn on the u-o diphthong, found via the 'o' target)
+        //     "ban"   + w -> "băn"     (breve on 'a')
+        //     "trams" + w -> "trăms"   (we skip 's' and 'm' and find 'a')
         for (i in composing.indices.reversed()) {
             val c = composing[i]
             if (!c.isLetter()) break
@@ -322,6 +325,8 @@ object TelexEngine {
                 }
                 'u' -> return composing.substring(0, i) + 'ư' + composing.substring(i + 1)
                 'U' -> return composing.substring(0, i) + 'Ư' + composing.substring(i + 1)
+                'a' -> return composing.substring(0, i) + 'ă' + composing.substring(i + 1)
+                'A' -> return composing.substring(0, i) + 'Ă' + composing.substring(i + 1)
             }
         }
         return null
