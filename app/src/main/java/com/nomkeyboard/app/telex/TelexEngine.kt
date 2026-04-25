@@ -289,14 +289,29 @@ object TelexEngine {
         if (start >= composing.length) return false
         var vowelRuns = 0
         var inVowel = false
+        // Track whether we've already seen a toned vowel and count how many further vowels
+        // appear after it. A Vietnamese syllable carries at most one tone, and the only
+        // canonical shapes where a toned vowel is followed by more letters have AT MOST
+        // one trailing vowel in the same vowel cluster (e.g. "nếu" with 'u' after toned
+        // 'ế', or "ngoài" with 'i' after toned 'à'). If we see two or more vowels after
+        // the tone carrier, the syllable has extended beyond any legal Vietnamese vowel
+        // cluster (e.g. "nếua" with the extra 'ua' past 'ế') – refuse to apply another
+        // tone trigger in that case so the trigger letter passes through literally.
+        var sawTonedVowel = false
+        var vowelsAfterTone = 0
         for (i in start until composing.length) {
-            val v = composing[i].isVowelLike()
+            val ch = composing[i]
+            val v = ch.isVowelLike()
             if (v && !inVowel) {
                 vowelRuns++
                 if (vowelRuns >= 2) return false
             }
+            if (v && sawTonedVowel) vowelsAfterTone++
+            val entry = toneReverse[ch]
+            if (entry != null && entry.second != 0) sawTonedVowel = true
             inVowel = v
         }
+        if (sawTonedVowel && vowelsAfterTone >= 2) return false
         // Exactly one vowel run means a canonical Vietnamese syllable shape; zero vowels
         // (all consonants) means there's no place for a tone so we still return false.
         return vowelRuns == 1
