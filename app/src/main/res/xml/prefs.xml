@@ -22,6 +22,12 @@
         android:defaultValue="true" />
 
     <SwitchPreferenceCompat
+        android:key="pref_use_nom_font"
+        android:title="@string/pref_use_nom_font"
+        android:summary="@string/pref_use_nom_font_summary"
+        android:defaultValue="true" />
+
+    <SwitchPreferenceCompat
         android:key="pref_vibrate"
         android:title="@string/pref_vibrate"
         android:summary="@string/pref_vibrate_summary"

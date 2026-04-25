@@ -51,7 +51,7 @@ class CandidateBar @JvmOverloads constructor(
     }
 
     fun setTypeface(tf: Typeface?) {
-        if (tf != null) textPaint.typeface = tf
+        textPaint.typeface = tf ?: Typeface.DEFAULT
         invalidate()
     }
 

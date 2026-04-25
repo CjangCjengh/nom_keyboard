@@ -74,7 +74,7 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 resources.getDimensionPixelSize(R.dimen.kb_candidate_height)
             )
-            setTypeface(nomTypeface)
+            // Typeface is assigned in applyTheme() below, according to the user preference.
             listener = this@NomInputMethodService
         }
         keyboardView = KeyboardView(ctx).apply {
@@ -103,6 +103,11 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         candidateBar.applyTheme(theme)
 
         keyboardView.setHapticsEnabled(prefs.getBoolean("pref_vibrate", true))
+        // Candidate bar font follows user preference: bundled Han-Nom Gothic (default) or
+        // the system default. Switching is instant because [CandidateBar.setTypeface] falls
+        // back to Typeface.DEFAULT when null is passed.
+        val useNomFont = prefs.getBoolean("pref_use_nom_font", true)
+        candidateBar.setTypeface(if (useNomFont) nomTypeface else null)
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
