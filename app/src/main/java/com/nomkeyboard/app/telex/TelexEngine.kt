@@ -394,9 +394,27 @@ object TelexEngine {
             inVowel = v
         }
         if (sawTonedVowel && vowelsAfterTone >= 2) return false
-        // Exactly one vowel run means a canonical Vietnamese syllable shape; zero vowels
-        // (all consonants) means there's no place for a tone so we still return false.
-        return vowelRuns == 1
+        if (vowelRuns != 1) {
+            // Zero vowels (all consonants) means there's no place for a tone; more than one
+            // vowel run already returned false above.
+            return false
+        }
+
+        // Extra phonotactic guard: reject "naked double-same-vowel" syllables aa/ee/oo
+        // (any case mixture, stripped of a gi-/qu- onset glide and any surrounding consonants).
+        // Those shapes aren't legal modern Vietnamese – the canonical forms are â/ê/ô – so
+        // when the user deliberately stays on aa/ee/oo (usually because they un-merged or
+        // typed a foreign word), a tone trigger should pass through literally: "aa"+r -> "aar",
+        // "ee"+r -> "eer", "oo"+r -> "oor", "oo"+s -> "oos", etc. The uu cluster stays legal
+        // (it's the bare form of ưu and a valid open-syllable shape).
+        val syllable = composing.substring(start)
+        // Extract the pure-vowel cluster (the single vowel run we already know exists).
+        val vStart = syllable.indexOfFirst { it.isVowelLike() }
+        var vEnd = vStart
+        while (vEnd < syllable.length && syllable[vEnd].isVowelLike()) vEnd++
+        val cluster = syllable.substring(vStart, vEnd).lowercase()
+        if (cluster == "aa" || cluster == "ee" || cluster == "oo") return false
+        return true
     }
 
     /**
@@ -758,6 +776,11 @@ object TelexEngine {
         // So: it's rising iff firstCh ∈ {o,u} AND secondCh is NOT 'i'.
         val firstCh = s[firstVowel].lowercaseChar()
         val secondCh = s[lastVowel].lowercaseChar()
+        // Same-letter double-vowel clusters (currently only "uu" survives the phonotactic
+        // filter; aa/ee/oo are rejected upstream) behave like FALLING diphthongs – the tone
+        // lands on the first vowel, giving "uu"+r -> "ủu" rather than the misleading "uủ"
+        // that the generic rising-diphthong branch below would produce.
+        if (firstCh == secondCh) return firstVowel
         val isRisingDiphthong = firstCh in "ou" && secondCh != 'i'
         return when {
             !isRisingDiphthong -> firstVowel   // falling diphthong: gái, sáo, éo, úi, ối...

@@ -65,7 +65,8 @@
             android:hint="@string/test_input_hint"
             android:layout_marginTop="16dp"
             android:minLines="3"
-            android:inputType="textMultiLine"
+            android:inputType="textMultiLine|textNoSuggestions"
+            android:importantForAutofill="no"
             android:gravity="top"
             android:padding="8dp"
             android:background="#11000000"/>
