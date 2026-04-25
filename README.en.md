@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" alt="Nom Keyboard" width="200" />
+</p>
+
 # Nom Keyboard for Android
 
 > 👉 _This document is in **English**. **[Phiên bản tiếng Việt](README.md)**._

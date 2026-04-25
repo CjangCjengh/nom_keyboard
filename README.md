@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" alt="Bàn phím chữ Nôm" width="200" />
+</p>
+
 # Bàn phím chữ Nôm cho Android
 
 > 👉 _Tài liệu này bằng **tiếng Việt**. **[English version here](README.en.md)**._
