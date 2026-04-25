@@ -71,6 +71,11 @@ class KeyboardView @JvmOverloads constructor(
     }
     private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
+    // Stroke paint used to highlight the Shift key when it is in the "temporary uppercase" or
+    // "caps-lock" state. This gives immediate visual feedback so the user knows whether the
+    // next letter will be capitalised.
+    private val shiftActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
     // ----------- Dimensions -----------
     private val keyHeight = resources.getDimension(R.dimen.kb_key_height)
     private val keyGap = resources.getDimension(R.dimen.kb_key_gap)
@@ -228,13 +233,11 @@ class KeyboardView @JvmOverloads constructor(
             else -> keyTextSize
         }
 
-        // Adjust label for state-dependent keys
+        // Adjust label for state-dependent keys.
+        // Shift uses a single arrow in all states; its state is conveyed by filled/hollow styling
+        // (see the stroke pass below), which matches Gboard and avoids the confusing "double arrow".
         val displayLabel = when (k.code) {
-            KeyCode.SHIFT -> when (shift) {
-                2 -> "⇧⇧"   // caps-lock indicator
-                1 -> "⇧"
-                else -> "⇧"
-            }
+            KeyCode.SHIFT -> "⇧"
             KeyCode.CHAR -> if (page == 0 && shift > 0) k.label.uppercase() else k.label
             KeyCode.SPACE -> " "   // drawn as a thin indicator bar instead of text
             else -> k.label
@@ -242,7 +245,25 @@ class KeyboardView @JvmOverloads constructor(
 
         val cx = (kr.rect.left + kr.rect.right) / 2f
         val textY = (kr.rect.top + kr.rect.bottom) / 2f - (paint.descent() + paint.ascent()) / 2f
-        canvas.drawText(displayLabel, cx, textY, paint)
+
+        // When Shift is active (temporary) or locked, overlay an accent-coloured ring around the
+        // Shift key and tint its glyph so the user gets an unambiguous visual cue.
+        if (k.code == KeyCode.SHIFT && shift > 0) {
+            shiftActivePaint.color = theme.accent
+            shiftActivePaint.strokeWidth = if (shift == 2) 6f else 3f
+            val inset = shiftActivePaint.strokeWidth / 2f
+            val ringRect = RectF(
+                kr.rect.left + inset, kr.rect.top + inset,
+                kr.rect.right - inset, kr.rect.bottom - inset,
+            )
+            canvas.drawRoundRect(ringRect, keyRadius, keyRadius, shiftActivePaint)
+            val originalColor = paint.color
+            paint.color = theme.accent
+            canvas.drawText(displayLabel, cx, textY, paint)
+            paint.color = originalColor
+        } else {
+            canvas.drawText(displayLabel, cx, textY, paint)
+        }
 
         // Draw a thin centred bar on the SPACE key (signature Gboard detail)
         if (k.code == KeyCode.SPACE) {
@@ -253,6 +274,13 @@ class KeyboardView @JvmOverloads constructor(
                 cx + barW / 2, kr.rect.centerY() + 11f
             )
             canvas.drawRoundRect(bar, 2f, 2f, dividerPaint)
+        }
+
+        // Draw a small dot on top of the Caps-Lock-style Shift when shift == 2 so it reads as
+        // "always on" in the same language as most soft keyboards (a filled dot below the arrow).
+        if (k.code == KeyCode.SHIFT && shift == 2) {
+            val dotR = 3f
+            canvas.drawCircle(cx, kr.rect.bottom - dotR * 3f, dotR, paint)
         }
     }
 
@@ -359,9 +387,9 @@ class KeyboardView @JvmOverloads constructor(
                     invalidate()
                 }
             }
-            KeyCode.SYMBOL -> { page = 1; requestLayout() }
-            KeyCode.SYMBOL2 -> { page = 2; requestLayout() }
-            KeyCode.LETTER -> { page = 0; requestLayout() }
+            KeyCode.SYMBOL -> switchPage(1)
+            KeyCode.SYMBOL2 -> switchPage(2)
+            KeyCode.LETTER -> switchPage(0)
             KeyCode.COMMA -> listener?.onChar(',')
             KeyCode.PERIOD -> listener?.onChar('.')
             KeyCode.LANGUAGE -> listener?.onSwitchLanguage()
@@ -374,5 +402,24 @@ class KeyboardView @JvmOverloads constructor(
             shift = 0
             invalidate()
         }
+    }
+
+    /**
+     * Switch between the letters / ?123 / =\< pages.
+     *
+     * We explicitly rebuild the key layout and request a re-measure, because the new page may
+     * contain a different number of rows (all three pages happen to have four rows here, but we
+     * must still refresh `keyRects` so that the newly drawn keys are actually hit-testable).
+     * Just calling `requestLayout()` is not enough: when the measured size does not change,
+     * `onSizeChanged()` is never invoked and the old `keyRects` linger from the previous page,
+     * causing tapped keys on the new page to do nothing.
+     */
+    private fun switchPage(newPage: Int) {
+        if (page == newPage) return
+        page = newPage
+        pressedKey = null
+        layoutKeys()
+        requestLayout()
+        invalidate()
     }
 }

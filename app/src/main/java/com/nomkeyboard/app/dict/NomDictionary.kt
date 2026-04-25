@@ -19,6 +19,7 @@ import java.text.Normalizer
  */
 object NomDictionary {
     private const val TAG = "NomDict"
+    private const val PREFIX_LIMIT = 24
 
     private val singleMap: HashMap<String, List<String>> = HashMap(7000)
     private val wordMap: HashMap<String, List<String>> = HashMap(3000)
@@ -110,14 +111,47 @@ object NomDictionary {
     }
 
     /**
-     * Combined lookup: try compound word first, then fall back to single-syllable candidates.
+     * Combined lookup: try compound word first, then fall back to single-syllable candidates,
+     * and finally – if the caller is still typing – do a prefix search over the compound index
+     * so partial inputs such as "anhquo" still surface useful suggestions (e.g. the candidates
+     * for "anhquoc" -> 英國) instead of an empty bar.
      */
     fun lookup(query: String): List<String> {
         if (query.isEmpty()) return emptyList()
         val merged = LinkedHashSet<String>()
         merged.addAll(lookupWord(query))
         merged.addAll(lookupSingle(query))
+        merged.addAll(lookupPrefix(query, PREFIX_LIMIT))
         return merged.toList()
+    }
+
+    /**
+     * Return candidates whose (ascii, no-space) compound key STARTS WITH the ascii form of
+     * [query]. Useful for incremental typing: the user has not finished the syllable yet but
+     * we still want to show plausible compound completions.
+     *
+     * The returned list is capped at [limit] entries to keep the candidate strip responsive.
+     */
+    fun lookupPrefix(query: String, limit: Int = PREFIX_LIMIT): List<String> {
+        if (query.isEmpty()) return emptyList()
+        val qAscii = stripDiacritics(query.lowercase()).replace(" ", "")
+        if (qAscii.isEmpty()) return emptyList()
+        val result = LinkedHashSet<String>()
+        for ((asciiKey, originals) in asciiWordIndex) {
+            if (result.size >= limit) break
+            if (asciiKey.length > qAscii.length && asciiKey.startsWith(qAscii)) {
+                for (orig in originals) {
+                    wordMap[orig]?.let { values ->
+                        for (v in values) {
+                            result.add(v)
+                            if (result.size >= limit) break
+                        }
+                    }
+                    if (result.size >= limit) break
+                }
+            }
+        }
+        return result.toList()
     }
 
     /**

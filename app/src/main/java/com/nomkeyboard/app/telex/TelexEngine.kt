@@ -24,7 +24,10 @@ package com.nomkeyboard.app.telex
  */
 object TelexEngine {
 
-    // Double-letter vowel modifiers: (existingChar, triggerChar) -> mergedChar
+    // Double-letter vowel modifiers: (existingChar, triggerChar) -> mergedChar.
+    // NOTE: "uw" / "ow" work even when the 'u' / 'o' is not the last character of the buffer,
+    // because real Vietnamese Telex rewrites the most recent matching vowel – that logic lives
+    // in [apply] below. This table only records the pairwise rewrite result.
     private val vowelMod: Map<Pair<Char, Char>, Char> = mapOf(
         'a' to 'a' to 'â',
         'a' to 'w' to 'ă',
@@ -106,9 +109,25 @@ object TelexEngine {
      * If [ch] does not trigger any transformation, the result is simply [composing] + [ch].
      */
     fun apply(composing: String, ch: Char): String {
+        // "w" typed on its own (no prior letters or after a non-letter) expands to "ư" – a
+        // very common shortcut most Vietnamese Telex engines provide.
+        if ((ch == 'w' || ch == 'W') && (composing.isEmpty() || !composing.last().isLetter())) {
+            val merged = if (ch == 'W') 'Ư' else 'ư'
+            return composing + merged
+        }
+
         if (composing.isEmpty()) return ch.toString()
 
-        // 1. Vowel modifier (double-letter merge): last char + ch forms a modifier pair
+        // 1a. "w" does not need to be immediately preceded by o/u: it rewrites the most recent
+        //     o/u/O/U in the current syllable. This lets the user type "nguoi" then "w" to get
+        //     "nguơi" (rewrite the trailing 'o' to 'ơ'), or "uo" + "w" to get "ươ"
+        //     (both the 'u' and 'o' of the "uo" diphthong get their horn marks).
+        if (ch == 'w' || ch == 'W') {
+            val rewritten = rewriteHornForW(composing)
+            if (rewritten != null) return rewritten
+        }
+
+        // 1b. Vowel modifier (double-letter merge): last char + ch forms a modifier pair
         val last = composing.last()
         val pairKey = last to ch
         vowelMod[pairKey]?.let { merged ->
@@ -140,6 +159,47 @@ object TelexEngine {
     }
 
     private fun Char.isVowelLike(): Boolean = toneReverse.containsKey(this) || vowels.contains(this)
+
+    /**
+     * Apply the horn diacritic in response to the Telex "w" trigger. This covers three cases:
+     *   - The syllable ends with the diphthong "uo" / "uO" / "Uo" / "UO": both vowels receive
+     *     the horn (ươ or its uppercase variants).
+     *   - The syllable contains a plain o/O/u/U somewhere (not necessarily in the last position):
+     *     only the most recent one is rewritten (handles "nguoi" + w -> "nguơi",
+     *     "quang" -> nothing, etc.).
+     * Returns null if no rewrite is applicable and the caller should fall back to normal rules.
+     *
+     * The case of the resulting horn vowel is derived from the scanned character itself, so the
+     * trigger key's own case ('w' vs 'W') is irrelevant here.
+     */
+    private fun rewriteHornForW(composing: String): String? {
+        // Case 1: consecutive "uo" at the tail – rewrite both to ươ.
+        if (composing.length >= 2) {
+            val c1 = composing[composing.length - 2]
+            val c2 = composing[composing.length - 1]
+            val pair = "${c1}${c2}".lowercase()
+            if (pair == "uo") {
+                val newC1 = if (c1.isUpperCase()) 'Ư' else 'ư'
+                val newC2 = if (c2.isUpperCase()) 'Ơ' else 'ơ'
+                return composing.dropLast(2) + newC1 + newC2
+            }
+        }
+
+        // Case 2: scan backwards for the most recent o/u that is still inside the current
+        // syllable (we stop at a non-letter boundary). The target vowel does not have to be at
+        // the very end – e.g. "nguoi" + w should rewrite the 'o' in "ngu-o-i" to 'ơ'.
+        for (i in composing.indices.reversed()) {
+            val c = composing[i]
+            if (!c.isLetter()) break
+            when (c) {
+                'o' -> return composing.substring(0, i) + 'ơ' + composing.substring(i + 1)
+                'O' -> return composing.substring(0, i) + 'Ơ' + composing.substring(i + 1)
+                'u' -> return composing.substring(0, i) + 'ư' + composing.substring(i + 1)
+                'U' -> return composing.substring(0, i) + 'Ư' + composing.substring(i + 1)
+            }
+        }
+        return null
+    }
 
     /**
      * Pick the best vowel position in [s] to carry the tone mark.

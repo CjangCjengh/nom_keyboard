@@ -42,6 +42,10 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
     private var composing: String = ""
     private var nomTypeface: Typeface? = null
 
+    // Cache of the most-recently computed candidate list so that pressing Space can pick the
+    // top candidate as the "best guess". See [onSpace] for the rationale.
+    private var currentCandidates: List<String> = emptyList()
+
     private val recentCounts = HashMap<String, Int>()
     private lateinit var prefs: SharedPreferences
 
@@ -80,8 +84,12 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         }
 
         applyTheme()
-        val showCandidate = prefs.getBoolean("pref_show_candidates", true)
-        if (showCandidate) rootView.addView(candidateBar)
+        // The candidate bar is always part of the layout but starts hidden. We toggle its
+        // visibility in [updateComposing] so that it appears only while the user is composing
+        // (and the user preference allows it). This matches Gboard: an always-visible strip
+        // wastes vertical space when there is nothing to suggest.
+        rootView.addView(candidateBar)
+        candidateBar.visibility = View.GONE
         rootView.addView(keyboardView)
         return rootView
     }
@@ -154,16 +162,27 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
 
     override fun onSpace() {
         playKeyClickSound()
-        // Behaviour:
-        //   - With composing: commit the plain Vietnamese text first, then insert a space.
-        //     To get a Nom character, the user must tap a candidate before pressing space.
-        //   - Without composing: just insert a space.
-        //   (Compound-word entries are triggered by typing consecutive syllables without
-        //   spaces, e.g. "chunom" -> 𡦂喃.)
-        commitComposing()
-        currentInputConnection?.commitText(" ", 1)
+        // Space behaviour:
+        //   - If there is no composing buffer: just insert a literal space.
+        //   - If the user is composing AND we have at least one Nom candidate: pick the first
+        //     candidate (the "best guess") and commit it, WITHOUT appending a space – the user
+        //     is likely trying to keep typing another syllable of a multi-syllable word. A
+        //     second space press (with an empty buffer) will then insert the literal space.
+        //   - If the user is composing but there is NO Nom candidate: commit the plain
+        //     Vietnamese text and insert a space, as a graceful fallback.
+        if (composing.isEmpty()) {
+            currentInputConnection?.commitText(" ", 1)
+        } else if (currentCandidates.isNotEmpty()) {
+            val best = currentCandidates[0]
+            currentInputConnection?.commitText(best, 1)
+            bumpRecent(best)
+            composing = ""
+            updateComposing()
+        } else {
+            commitComposing()
+            currentInputConnection?.commitText(" ", 1)
+        }
     }
-
     override fun onSymbol(text: String) {
         commitComposing()
         currentInputConnection?.commitText(text, 1)
@@ -180,6 +199,7 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         currentInputConnection?.commitText(text, 1)
         bumpRecent(text)
         composing = ""
+        currentCandidates = emptyList()
         updateComposing()
     }
 
@@ -187,10 +207,13 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
 
     private fun updateComposing() {
         val ic = currentInputConnection ?: return
+        val showCandidate = prefs.getBoolean("pref_show_candidates", true)
         if (composing.isEmpty()) {
             ic.setComposingText("", 1)
             ic.finishComposingText()
             candidateBar.clear()
+            currentCandidates = emptyList()
+            if (::candidateBar.isInitialized) candidateBar.visibility = View.GONE
             return
         }
         ic.setComposingText(composing, 1)
@@ -199,6 +222,8 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         // Sort by recent-usage frequency, stable ordering preserves dictionary order otherwise
         val sorted = list.sortedByDescending { recentCounts.getOrDefault(it, 0) }
         candidateBar.setCandidates(sorted)
+        currentCandidates = sorted
+        candidateBar.visibility = if (showCandidate) View.VISIBLE else View.GONE
     }
 
     private fun commitComposing() {
