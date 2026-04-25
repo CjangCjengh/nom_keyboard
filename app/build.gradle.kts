@@ -1,6 +1,8 @@
+import java.util.Properties
+
 plugins {
-    id("com.android.application") version "8.5.2" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.25" apply false
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -24,7 +26,7 @@ android {
     // If the file is missing, the release build falls back to the debug signing config for local testing.
     val keystorePropsFile = rootProject.file("keystore.properties")
     val releaseSigning = if (keystorePropsFile.exists()) {
-        val props = java.util.Properties().apply {
+        val props = Properties().apply {
             keystorePropsFile.inputStream().use { load(it) }
         }
         signingConfigs.create("release") {
