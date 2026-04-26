@@ -679,8 +679,19 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
             // Complete-syllable picks (e.g. "ban", "quoc") take the no-op branch so
             // [rawConsumed] is used verbatim as before.
             val consumedTailAscii = NomDictionary.stripDiacritics(consumedTail.lowercase())
+            // Recovery trigger expanded from the original "consumedTail is not a
+            // complete Vn syllable" to ALSO include "consumedTail IS a complete
+            // Vn syllable but is NOT a legal reading of [text]". That second
+            // branch catches the subtle case where the user types a short prefix
+            // that happens to also be a valid syllable on its own (e.g. "ki"
+            // which is the reading of 機) but picks a Nom whose reading set
+            // doesn't include that ascii form (e.g. 嬌's readings are all
+            // kieu/kiêu/kiều – ascii `kieu`). Without this, learnKey stays as
+            // the verbatim "ki" and the learner records a bogus "ki: 嬌" /
+            // "bình ki: 病嬌" entry. See [NomDictionary.hasSingleReadingAscii].
             val needsTailRecovery = !consumedTail.contains(' ') && text.length == 1 &&
-                !NomDictionary.isCompleteAsciiSyllable(consumedTailAscii)
+                (!NomDictionary.isCompleteAsciiSyllable(consumedTailAscii) ||
+                    !NomDictionary.hasSingleReadingAscii(text, consumedTailAscii))
             val prevLearnKey = if (lockedHistory.isNotEmpty() &&
                 lockedHistory.last().isShorthand) lockedHistory.last().learnKey else ""
             val tailLearnKey = if (needsTailRecovery)
@@ -760,8 +771,11 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         // shorthand-tail case and the "single letter is only a syllable prefix" case.
         // See the detailed comment there for rationale.
         val consumedRawAscii = NomDictionary.stripDiacritics(consumedRaw.lowercase())
+        // Same expanded trigger as the final-pick branch: also recover when the
+        // user's letters are a valid syllable but not a legal reading of [text].
         val needsPartialRecovery = !consumedRaw.contains(' ') && text.length == 1 &&
-            !NomDictionary.isCompleteAsciiSyllable(consumedRawAscii)
+            (!NomDictionary.isCompleteAsciiSyllable(consumedRawAscii) ||
+                !NomDictionary.hasSingleReadingAscii(text, consumedRawAscii))
         val prevPartialLearnKey = if (lockedHistory.isNotEmpty() &&
             lockedHistory.last().isShorthand) lockedHistory.last().learnKey else ""
         val partialLearnKey = if (needsPartialRecovery)

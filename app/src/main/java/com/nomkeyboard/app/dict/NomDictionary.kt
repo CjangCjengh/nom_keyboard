@@ -247,6 +247,26 @@ object NomDictionary {
     }
 
     /**
+     * @return true iff the single-char dictionary lists [nom] under ANY reading whose
+     *   ascii (diacritic-stripped) form equals [asciiLower]. Used by the segment-mode
+     *   learner to decide whether the letters the user typed for a single-char pick
+     *   are actually a legal reading of the picked Nom: if not, we upgrade to a real
+     *   reading via [lookupAsciiReadingForNom] before learning. Example: user types
+     *   `ki` and picks 嬌 – 嬌's readings are `kiều/kiêu/...` (ascii `kieu`), none
+     *   equals `ki`, so we refuse to learn "ki: 嬌" and upgrade to "kiều: 嬌" instead.
+     *   Critically, typing `ki` and picking 機 (which has reading `ki`) DOES match
+     *   and preserves the verbatim learning.
+     */
+    fun hasSingleReadingAscii(nom: String, asciiLower: String): Boolean {
+        if (nom.isEmpty() || asciiLower.isEmpty()) return false
+        val readings = nomToSingleAsciiReadings[nom] ?: return false
+        for (r in readings) {
+            if (stripDiacritics(r) == asciiLower) return true
+        }
+        return false
+    }
+
+    /**
      * @return true iff [asciiLower] is an exact ascii single-syllable key (e.g. `sao`,
      *   `quoc`). Used by the viết tắt splitter to greedy-swallow real syllable chunks
      *   mid-run so that inputs like `tsao` cleanly split into `[t, sao]`.
