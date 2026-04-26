@@ -65,6 +65,13 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    // Robolectric needs the Android resources/assets merged into the test classpath so
+    // NomDictionary.ensureLoaded() can open the bundled TSV files when the learner
+    // unit tests run on the JVM.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -74,4 +81,12 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
+    // Local JVM unit tests (src/test/). Robolectric provides a fake Android runtime so
+    // tests that touch Context / assets (e.g. NomDictionary.ensureLoaded) still run
+    // without a device.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.12.1")
+    testImplementation("androidx.test:core:1.5.0")
+    testImplementation("androidx.test.ext:junit:1.1.5")
 }

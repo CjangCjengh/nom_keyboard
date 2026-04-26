@@ -678,24 +678,25 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
             //
             // Complete-syllable picks (e.g. "ban", "quoc") take the no-op branch so
             // [rawConsumed] is used verbatim as before.
-            val consumedTailAscii = NomDictionary.stripDiacritics(consumedTail.lowercase())
-            // Recovery trigger expanded from the original "consumedTail is not a
-            // complete Vn syllable" to ALSO include "consumedTail IS a complete
-            // Vn syllable but is NOT a legal reading of [text]". That second
-            // branch catches the subtle case where the user types a short prefix
-            // that happens to also be a valid syllable on its own (e.g. "ki"
-            // which is the reading of 機) but picks a Nom whose reading set
-            // doesn't include that ascii form (e.g. 嬌's readings are all
-            // kieu/kiêu/kiều – ascii `kieu`). Without this, learnKey stays as
-            // the verbatim "ki" and the learner records a bogus "ki: 嬌" /
-            // "bình ki: 病嬌" entry. See [NomDictionary.hasSingleReadingAscii].
+            // Recovery trigger: single-char pick whose raw tone-marked letters are NOT
+            // a legal reading of [text]. "Legal" means either the bundled single-char
+            // dictionary has <consumedTail> -> ... -> [text], or the user dictionary
+            // contains a single-syllable override whose key equals <consumedTail> and
+            // value contains [text]. Tone-SENSITIVE: "bình" is NOT a legal reading
+            // of 病 (whose bundled readings are bệnh/bịnh/bạnh/nạch) even though
+            // both strip to ascii `binh`, so the learner will upgrade. But if the
+            // user has added `bình: 病` by hand, the override makes "bình" legal
+            // and we preserve it verbatim.
+            //
+            // When recovery fires, we pick the legal reading with the SMALLEST
+            // edit distance to what the user typed (tie-broken by dictionary
+            // order + user-dict inclusion). So "bềnh" picking 病 upgrades to
+            // "bệnh" (edit distance 1) rather than "bịnh" (distance 2) or
+            // "bạnh" (distance 2) – see [NomDictionary.pickClosestReadingForNom].
             val needsTailRecovery = !consumedTail.contains(' ') && text.length == 1 &&
-                (!NomDictionary.isCompleteAsciiSyllable(consumedTailAscii) ||
-                    !NomDictionary.hasSingleReadingAscii(text, consumedTailAscii))
-            val prevLearnKey = if (lockedHistory.isNotEmpty() &&
-                lockedHistory.last().isShorthand) lockedHistory.last().learnKey else ""
+                !NomDictionary.isLegalReadingForNom(text, consumedTail)
             val tailLearnKey = if (needsTailRecovery)
-                NomDictionary.lookupAsciiReadingForNom(text, consumedTail, prevLearnKey)
+                NomDictionary.pickClosestReadingForNom(text, consumedTail)
             else ""
             // Segment-mode bundled upgrade: when the pick is a multi-character Nom
             // word AND consumedTail spans ≥ 2 syllables, try to find a bundled key
@@ -770,16 +771,14 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         // Same reading-recovery as the final-pick branch above – covers both the
         // shorthand-tail case and the "single letter is only a syllable prefix" case.
         // See the detailed comment there for rationale.
-        val consumedRawAscii = NomDictionary.stripDiacritics(consumedRaw.lowercase())
-        // Same expanded trigger as the final-pick branch: also recover when the
-        // user's letters are a valid syllable but not a legal reading of [text].
+        // Same legal-reading recovery as the final-pick branch above: when the
+        // user's tone-marked letters are not a legal reading of [text], upgrade to
+        // the closest legal reading by edit distance (tie-broken by dictionary
+        // order). See the final-pick comment for the full rationale.
         val needsPartialRecovery = !consumedRaw.contains(' ') && text.length == 1 &&
-            (!NomDictionary.isCompleteAsciiSyllable(consumedRawAscii) ||
-                !NomDictionary.hasSingleReadingAscii(text, consumedRawAscii))
-        val prevPartialLearnKey = if (lockedHistory.isNotEmpty() &&
-            lockedHistory.last().isShorthand) lockedHistory.last().learnKey else ""
+            !NomDictionary.isLegalReadingForNom(text, consumedRaw)
         val partialLearnKey = if (needsPartialRecovery)
-            NomDictionary.lookupAsciiReadingForNom(text, consumedRaw, prevPartialLearnKey)
+            NomDictionary.pickClosestReadingForNom(text, consumedRaw)
         else ""
         // Segment-mode bundled upgrade (same logic as the final-pick branch, see
         // there for the full rationale): upgrade learnKey to the bundled key's

@@ -84,6 +84,41 @@ object UserDictionary {
         synchronized(this) { return entries.size }
     }
 
+    /**
+     * @return the user-dictionary Nom value list stored under the EXACT tone-marked
+     *   single-syllable [key] (e.g. `bình`), or null if no such entry exists. Tone-
+     *   sensitive: `bình` and `bịnh` are distinct keys. Multi-syllable keys (those
+     *   containing whitespace) are ignored – use [lookupWord] for those. Used by the
+     *   segment-mode learner to decide whether the user has taught the IME that a
+     *   particular tone-marked spelling is a legal reading of a given Nom.
+     */
+    fun singleEntryValues(key: String): List<String>? {
+        if (key.isEmpty() || key.contains(' ')) return null
+        synchronized(this) {
+            return entries[key.lowercase()]?.toList()
+        }
+    }
+
+    /**
+     * @return every single-syllable user-dictionary key (tone-marked, lowercase) whose
+     *   value list contains [nom], in insertion order. Used by the reading-picker to
+     *   include user-defined readings as candidates when choosing the closest tone-
+     *   exact reading for a pick (e.g. if the user has added `bình: 病` by hand, then
+     *   typing `bình` and picking 病 should record `bình: 病` verbatim instead of
+     *   upgrading to the bundled `bệnh`).
+     */
+    fun singleKeysForNom(nom: String): List<String> {
+        if (nom.isEmpty()) return emptyList()
+        synchronized(this) {
+            val result = ArrayList<String>()
+            for ((key, values) in entries) {
+                if (key.contains(' ')) continue
+                if (values.contains(nom)) result.add(key)
+            }
+            return result
+        }
+    }
+
     fun lookupSingle(query: String, strict: Boolean = false): List<String> {
         if (query.isEmpty()) return emptyList()
         synchronized(this) {

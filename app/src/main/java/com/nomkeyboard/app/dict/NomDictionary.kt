@@ -267,6 +267,120 @@ object NomDictionary {
     }
 
     /**
+     * Snapshot of every tone-preserving reading known for [nom] from the bundled
+     * single-char dictionary. Order is dictionary-position ascending (primary reading
+     * first). Returns an empty list if the character has no single-char entry.
+     * Used by the segment-mode learner together with the user dictionary to decide
+     * which reading to record.
+     */
+    fun bundledReadingsForNom(nom: String): List<String> {
+        if (nom.isEmpty()) return emptyList()
+        return nomToSingleAsciiReadings[nom]?.toList() ?: emptyList()
+    }
+
+    /**
+     * @return true iff [rawReading] is a TONE-EXACT legal reading of [nom], either
+     *   according to the bundled single-char dictionary or according to a user-
+     *   dictionary entry whose key equals [rawReading] and value list contains [nom].
+     *   ASCII-only matches ("bình" vs "bịnh") do NOT count as legal – this is the
+     *   whole point: the caller (segment-mode learner) uses this to detect that the
+     *   user's tone-marked input disagrees with the picked Nom's actual pronunciations
+     *   and should be upgraded.
+     */
+    fun isLegalReadingForNom(nom: String, rawReading: String): Boolean {
+        if (nom.isEmpty() || rawReading.isEmpty()) return false
+        val r = rawReading.lowercase().trim()
+        if (r.isEmpty()) return false
+        // 1. Bundled single-char dictionary: reading -> [noms], tone-exact.
+        singleMap[r]?.let { if (it.contains(nom)) return true }
+        // 2. User dictionary single-syllable overrides (key has no spaces).
+        if (!r.contains(' ')) {
+            UserDictionary.singleEntryValues(r)?.let { if (it.contains(nom)) return true }
+        }
+        return false
+    }
+
+    /**
+     * Classic Levenshtein edit distance on Unicode code units. O(|a|·|b|) time &
+     * space. Good enough for our tiny syllable strings (<10 chars each) and is
+     * entirely self-contained so the segment-mode learner can use it without
+     * pulling in an external lib. We operate on the raw tone-marked strings so
+     * `bềnh` vs `bệnh` returns 1 (only the dot-below-vs-hook-above on `e`
+     * differs after NFC) while `bình` vs `bệnh` returns 1 (ì vs ệ) and
+     * `bình` vs `bịnh` also returns 1 (ì vs ị) – ties that the caller breaks
+     * by dictionary position.
+     */
+    fun editDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        val m = a.length
+        val n = b.length
+        // Rolling 2-row DP to keep memory small.
+        var prev = IntArray(n + 1) { it }
+        var curr = IntArray(n + 1)
+        for (i in 1..m) {
+            curr[0] = i
+            for (j in 1..n) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                curr[j] = minOf(
+                    prev[j] + 1,         // delete
+                    curr[j - 1] + 1,     // insert
+                    prev[j - 1] + cost,  // substitute
+                )
+            }
+            val tmp = prev; prev = curr; curr = tmp
+        }
+        return prev[n]
+    }
+
+    /**
+     * Pick the legal tone-marked reading of [nom] whose string is CLOSEST to what the
+     * user typed in [userInput]. "Closest" is measured by [editDistance] on the raw
+     * tone-marked strings; ties are broken by the bundled dictionary's position order
+     * (primary reading first). When [userInput] is already a legal reading, it is
+     * returned verbatim so the user's choice is respected.
+     *
+     * User-dictionary single-syllable entries (e.g. `bình: 病` that the user added
+     * by hand) participate as candidate readings too, so the learner respects the
+     * user's overrides rather than dragging every pick back to the bundle's default.
+     *
+     * Returns empty string if [nom] has no known reading anywhere.
+     *
+     * Examples (bundled 病 readings are `bệnh/bịnh/bạnh/nạch`):
+     *   nom = "病", userInput = "bềnh" -> "bệnh"   (edit distance 1 < 2)
+     *   nom = "病", userInput = "bình" -> "bệnh"   (1 == 1, tie-broken by position)
+     *   nom = "病", userInput = "bệnh" -> "bệnh"   (exact match, verbatim)
+     *   nom = "嬌", userInput = "ki"   -> "kiều"   (closest kieu-prefixed reading)
+     */
+    fun pickClosestReadingForNom(nom: String, userInput: String): String {
+        if (nom.isEmpty()) return ""
+        val input = userInput.lowercase().trim()
+        // Collect candidate (reading, rank) pairs. Rank preserves dictionary order so
+        // ties in edit distance resolve deterministically.
+        val candidates = ArrayList<Pair<String, Int>>()
+        val seen = HashSet<String>()
+        var rank = 0
+        // Bundled readings first (primary readings get lowest rank -> win ties).
+        for (r in nomToSingleAsciiReadings[nom].orEmpty()) {
+            if (seen.add(r)) candidates.add(r to rank++)
+        }
+        // User-dict single-syllable overrides: any key whose value contains [nom]
+        // counts as a user-defined legal reading. Rank is appended AFTER bundled so
+        // bundled wins ties by default, but user-only readings still participate.
+        for (userKey in UserDictionary.singleKeysForNom(nom)) {
+            if (seen.add(userKey)) candidates.add(userKey to rank++)
+        }
+        if (candidates.isEmpty()) return ""
+        // If the user's input is itself one of the legal readings, respect it.
+        if (input.isNotEmpty() && candidates.any { it.first == input }) return input
+        // Otherwise: min edit distance, tie-break by rank.
+        return candidates.minWith(
+            compareBy({ editDistance(input, it.first) }, { it.second })
+        ).first
+    }
+
+    /**
      * @return true iff [asciiLower] is an exact ascii single-syllable key (e.g. `sao`,
      *   `quoc`). Used by the viết tắt splitter to greedy-swallow real syllable chunks
      *   mid-run so that inputs like `tsao` cleanly split into `[t, sao]`.
