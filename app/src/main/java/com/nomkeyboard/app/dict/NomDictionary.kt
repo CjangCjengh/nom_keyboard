@@ -26,6 +26,28 @@ object NomDictionary {
     // ascii key -> list of original keys (kept in dictionary order)
     private val asciiSingleIndex: HashMap<String, MutableList<String>> = HashMap(5000)
     private val asciiWordIndex: HashMap<String, MutableList<String>> = HashMap(2500)
+    /**
+     * Viết tắt (abbreviated-input) helper index: for every multi-syllable word, remember
+     * the ascii form of each syllable so a segment-by-segment prefix match can be done
+     * without re-splitting on every query. Value is an array of lowercase, diacritic-
+     * stripped syllables in the same order as the original key.
+     *
+     * Example: key "quốc gia" -> ["quoc", "gia"].
+     */
+    private val wordSyllablesAscii: HashMap<String, Array<String>> = HashMap(3000)
+    /**
+     * Viết tắt helper: word keys bucketed by syllable count. Keys are the **number of
+     * syllables** (2..N); values are the word keys with exactly that many syllables,
+     * preserved in dictionary-insertion order so candidate ranking stays deterministic.
+     */
+    private val wordsBySyllableCount: HashMap<Int, MutableList<String>> = HashMap(8)
+    /**
+     * Viết tắt helper: first-letter bucketing on top of [wordsBySyllableCount]. Key is
+     * `"<count>|<firstAsciiChar>"`, e.g. `"2|q"` holds every 2-syllable word whose
+     * first syllable starts with `q`. Used as a cheap pre-filter so the DP verifier
+     * only runs on entries that could plausibly match.
+     */
+    private val wordsBySyllableCountAndFirstChar: HashMap<String, MutableList<String>> = HashMap(500)
 
     @Volatile
     private var loaded = false
@@ -37,9 +59,144 @@ object NomDictionary {
             val t0 = System.currentTimeMillis()
             loadTsv(context, "nom_dict_single.tsv", singleMap, asciiSingleIndex)
             loadTsv(context, "nom_dict_word.tsv", wordMap, asciiWordIndex)
+            buildVietTatIndex()
             loaded = true
-            Log.i(TAG, "dictionary loaded: single=${singleMap.size}, word=${wordMap.size}, cost=${System.currentTimeMillis() - t0}ms")
+            Log.i(TAG, "dictionary loaded: single=${singleMap.size}, word=${wordMap.size}, words2syl=${wordsBySyllableCount[2]?.size ?: 0}, cost=${System.currentTimeMillis() - t0}ms")
         }
+    }
+
+    /**
+     * Build the viết tắt (abbreviated-input) helper indices. We bucket every
+     * space-separated multi-syllable word by its syllable count AND by the first
+     * ascii character of its first syllable, which are the two cheapest filters we
+     * can apply before running the per-word DP verifier in [lookupWordByVietTat].
+     */
+    private fun buildVietTatIndex() {
+        for (origKey in wordMap.keys) {
+            if (!origKey.contains(' ')) continue
+            val sylls = origKey.split(' ').filter { it.isNotEmpty() }
+            if (sylls.size < 2) continue
+            val asciiSylls = Array(sylls.size) { i -> stripDiacritics(sylls[i].lowercase()) }
+            // Skip entries with any empty ascii syllable – defensive, shouldn't happen.
+            if (asciiSylls.any { it.isEmpty() }) continue
+            wordSyllablesAscii[origKey] = asciiSylls
+            wordsBySyllableCount.getOrPut(asciiSylls.size) { ArrayList(512) }.add(origKey)
+            val firstChar = asciiSylls[0][0]
+            val bucketKey = "${asciiSylls.size}|$firstChar"
+            wordsBySyllableCountAndFirstChar.getOrPut(bucketKey) { ArrayList(64) }.add(origKey)
+        }
+    }
+
+    /**
+     * @return true iff [asciiLower] is a prefix of at least one ascii single-syllable
+     *   key. Used by the viết tắt splitter to detect "still mid-syllable" inputs so it
+     *   stays out of the way for normal typing like `qu`, `ngh`, `an`. Empty input
+     *   returns true (every key starts with the empty string) so callers should guard.
+     */
+    fun hasAsciiSinglePrefix(asciiLower: String): Boolean {
+        if (asciiLower.isEmpty()) return true
+        for (k in asciiSingleIndex.keys) {
+            if (k.startsWith(asciiLower)) return true
+        }
+        return false
+    }
+
+    /**
+     * @return true iff [asciiLower] is an exact ascii single-syllable key (e.g. `sao`,
+     *   `quoc`). Used by the viết tắt splitter to greedy-swallow real syllable chunks
+     *   mid-run so that inputs like `tsao` cleanly split into `[t, sao]`.
+     */
+    fun isAsciiSingleKey(asciiLower: String): Boolean {
+        if (asciiLower.isEmpty()) return false
+        return asciiSingleIndex.containsKey(asciiLower)
+    }
+
+    /**
+     * Return every single-syllable candidate whose ascii syllable key STARTS WITH
+     * [prefix]. Used for the "single syllable -> single character only" mode so that
+     * typing just `q` still surfaces every single-char candidate that could complete
+     * to a real syllable. [prefix] is lowercased and diacritic-stripped internally.
+     *
+     * Results keep the bundled dictionary's original ordering (common syllables first)
+     * so popular readings float to the top without extra sorting work on our side.
+     */
+    fun lookupSinglePrefix(prefix: String, limit: Int = PREFIX_LIMIT): List<String> {
+        if (prefix.isEmpty()) return emptyList()
+        val p = stripDiacritics(prefix.lowercase())
+        if (p.isEmpty()) return emptyList()
+        val result = LinkedHashSet<String>()
+        // First: prefer exact-ascii hits (these are usually the "right" pronunciation).
+        asciiSingleIndex[p]?.forEach { k ->
+            singleMap[k]?.let { values ->
+                for (v in values) {
+                    result.add(v)
+                    if (result.size >= limit) return result.toList()
+                }
+            }
+        }
+        // Then: sweep the ascii-single index for longer keys that start with p. We
+        // iterate the whole map because the index isn't sorted by key; for ~5000
+        // entries this is cheap enough on every keystroke.
+        for ((asciiKey, origs) in asciiSingleIndex) {
+            if (result.size >= limit) break
+            if (asciiKey.length > p.length && asciiKey.startsWith(p)) {
+                for (orig in origs) {
+                    singleMap[orig]?.let { values ->
+                        for (v in values) {
+                            result.add(v)
+                            if (result.size >= limit) break
+                        }
+                    }
+                    if (result.size >= limit) break
+                }
+            }
+        }
+        return result.toList()
+    }
+
+    /**
+     * Viết tắt compound lookup.
+     *
+     * Given a list of user-typed [segments] (each segment is a non-empty ascii run that
+     * the splitter produced, e.g. `["t", "sao"]` for "tsao"), return every bundled word
+     * whose syllables can be matched segment-by-segment, where each syllable's ascii
+     * form STARTS WITH the corresponding segment.
+     *
+     * Concretely, for a candidate word with ascii syllables `[a_1, a_2, ..., a_n]`:
+     *   match iff  n == segments.size  AND  a_i.startsWith(segments[i]) for all i.
+     *
+     * Example matches:
+     *   segments = ["q", "g"]      -> "quốc gia", every "q*"+"g*" 2-syllable word
+     *   segments = ["t", "sao"]    -> "tại sao" (tai startsWith t ✓, sao startsWith sao ✓)
+     *   segments = ["n", "ma"]     -> "nhưng mà" (nhung startsWith n ✓, ma startsWith ma ✓)
+     *   segments = ["nh", "ma"]    -> "nhưng mà" too (nhung startsWith nh ✓, ma startsWith ma ✓)
+     *
+     * Returns a list of `(origKey, values)` pairs preserving bundled-dictionary order so
+     * the caller can mix these with user-dictionary and recency data.
+     */
+    fun lookupWordByVietTat(
+        segments: List<String>,
+        limit: Int = PREFIX_LIMIT
+    ): List<Pair<String, List<String>>> {
+        if (segments.size < 2) return emptyList()
+        if (segments.any { it.isEmpty() }) return emptyList()
+        val n = segments.size
+        val firstChar = segments[0][0]
+        val bucket = wordsBySyllableCountAndFirstChar["$n|$firstChar"] ?: return emptyList()
+        val result = ArrayList<Pair<String, List<String>>>()
+        for (origKey in bucket) {
+            if (result.size >= limit) break
+            val asciiSylls = wordSyllablesAscii[origKey] ?: continue
+            if (asciiSylls.size != n) continue
+            var ok = true
+            for (i in 0 until n) {
+                if (!asciiSylls[i].startsWith(segments[i])) { ok = false; break }
+            }
+            if (!ok) continue
+            val values = wordMap[origKey] ?: continue
+            result.add(origKey to values)
+        }
+        return result
     }
 
     private fun loadTsv(

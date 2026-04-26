@@ -25,6 +25,18 @@
         android:entryValues="@array/space_behavior_values"
         android:defaultValue="segment" />
 
+    <SwitchPreferenceCompat
+        android:key="pref_single_syl_single_char_only"
+        android:title="@string/pref_single_syl_single_char_only"
+        android:summary="@string/pref_single_syl_single_char_only_summary"
+        android:defaultValue="false" />
+
+    <SwitchPreferenceCompat
+        android:key="pref_shorthand"
+        android:title="@string/pref_shorthand"
+        android:summary="@string/pref_shorthand_summary"
+        android:defaultValue="true" />
+
     <ListPreference
         android:key="pref_ngram_n"
         android:title="@string/pref_ngram_n"

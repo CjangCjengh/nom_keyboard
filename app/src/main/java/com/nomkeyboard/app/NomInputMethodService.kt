@@ -64,8 +64,40 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
      *   rawConsumed  – the Vietnamese syllables that this pick replaced
      *   nomText      – the Nom characters that were appended to [lockedPrefix]
      */
-    private data class LockedStep(val rawConsumed: String, val nomText: String)
+    private data class LockedStep(
+        val rawConsumed: String,
+        val nomText: String,
+        /**
+         * True when this step came from shorthand-mode picking. Shorthand steps never
+         * contribute to the user dictionary (there's no real reading to key on) and
+         * their [rawConsumed] holds the raw letter cluster that was consumed (e.g. the
+         * "q" in [q, g]) so backspace can put it back into the composing buffer
+         * verbatim.
+         */
+        val isShorthand: Boolean = false,
+    )
     private val lockedHistory: ArrayDeque<LockedStep> = ArrayDeque()
+
+    /**
+     * Viết tắt (viet-tat / abbreviated-input) working state. When the user types a run
+     * of letters that doesn't look like a partial Vietnamese syllable (e.g. "qg",
+     * "nma", "tsao", "nhma"), we greedy-split it into a sequence of syllable prefixes
+     * and look up compound words that match segment-by-segment. [shorthandSegments]
+     * holds the segmentation; [shorthandActive] gates the viet-tat lookup path.
+     *
+     * The raw [composing] buffer keeps the user's original letters verbatim so
+     * backspacing / continued typing stays intuitive; only the candidate-bar display
+     * uses the segmented form with `'` as a separator. When [composing] once again
+     * looks like it could be a normal Vietnamese syllable (some key in the ascii
+     * single-syllable index starts with it), viet-tat mode switches off and the code
+     * falls through to the normal flat lookup.
+     *
+     * Historical note: the internal field and preference names keep the legacy
+     * "shorthand" spelling to avoid invalidating existing user preferences. The
+     * user-facing name everywhere else is "viết tắt".
+     */
+    private var shorthandActive: Boolean = false
+    private var shorthandSegments: List<String> = emptyList()
 
     private var nomTypeface: Typeface? = null
 
@@ -361,6 +393,18 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
             NgramModel.resetContext()
             return
         }
+        // Mid-composition space. If the CURRENT tail segment has no Nom candidates
+        // whatsoever (not even single-character hits or prefix completions), there's
+        // nothing useful segment mode can do for this segment – so we commit what we
+        // have (Nom prefix + current raw tail as Vietnamese) and emit a real space,
+        // exactly like commit_on_empty mode. Keeps the UX snappy when the user types
+        // an unknown word mid-phrase.
+        if (currentCandidates.isEmpty()) {
+            commitComposing()
+            currentInputConnection?.commitText(" ", 1)
+            NgramModel.resetContext()
+            return
+        }
         // Normal case: append a syllable separator so the next character starts a new
         // syllable. Candidate lookup treats consecutive syllables as a phrase and will
         // surface multi-syllable compounds like "quốc gia" -> 國家.
@@ -465,6 +509,54 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         }
 
         val consumed = currentCandidateConsumed.getOrElse(index) { syllableCount(composing) }
+
+        // --------- Shorthand-mode pick ---------
+        // In shorthand mode the raw [composing] has NO spaces (e.g. "qg"), so the normal
+        // space-based splitter would treat it as one syllable and over-consume. We use
+        // [shorthandSegments] (the splitter output) to peel off the right number of
+        // consonant-only "segments" per pick.
+        if (shorthandActive && shorthandSegments.isNotEmpty()) {
+            val segs = shorthandSegments
+            val kSh = consumed.coerceIn(1, segs.size)
+            // If this pick covers every remaining segment -> FINAL: commit lockedPrefix +
+            // text and clear all state. No user-dict learning (shorthand has no real
+            // reading to key on) but the n-gram model still learns the character
+            // sequence so future suggestions benefit from it.
+            if (kSh >= segs.size) {
+                val full = lockedPrefix + text
+                currentInputConnection?.commitText(full, 1)
+                observeNgramForCommit(full)
+                bumpRecent(text)
+                composing = ""
+                lockedPrefix = ""
+                lockedHistory.clear()
+                currentCandidates = emptyList()
+                currentCandidateConsumed = IntArray(0)
+                shorthandActive = false
+                shorthandSegments = emptyList()
+                updateComposing()
+                collapseCandidatesIfExpanded()
+                return
+            }
+            // Partial pick: eat kSh segments, stitch the remaining segments back into
+            // the raw composing buffer (still space-free) and re-evaluate. The step
+            // records the consumed letter cluster so backspace can undo it verbatim.
+            // We slice [composing] by CHARACTER count (summing segment lengths) rather
+            // than by re-joining segment strings so that any casing/typos the user had
+            // in the original buffer are preserved verbatim in the undo record.
+            val firstKChars = segs.subList(0, kSh).sumOf { it.length }
+            val consumedRaw = composing.substring(0, firstKChars.coerceAtMost(composing.length))
+            val remainingRaw = if (firstKChars >= composing.length) "" else composing.substring(firstKChars)
+            lockedHistory.addLast(
+                LockedStep(rawConsumed = consumedRaw, nomText = text, isShorthand = true)
+            )
+            lockedPrefix += text
+            composing = remainingRaw
+            bumpRecent(text)
+            updateComposing()
+            return
+        }
+
         val syllables = splitSyllables(composing)
         val k = consumed.coerceIn(1, syllables.size.coerceAtLeast(1))
 
@@ -571,25 +663,73 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
             candidateBar.clear()
             currentCandidates = emptyList()
             currentCandidateConsumed = IntArray(0)
+            shorthandActive = false
+            shorthandSegments = emptyList()
             if (::candidateBar.isInitialized) candidateBar.visibility = View.GONE
             collapseCandidatesIfExpanded()
             return
         }
+        // The underline span shown in the editor always uses the raw letters the user typed
+        // (never the ' separator we draw on the candidate bar). This keeps the editor
+        // content clean and allows copy/paste of the Vietnamese form even before picks.
         ic.setComposingText(composingDisplay(), 1)
-        candidateBar.setComposing(composingDisplay())
 
-        // Candidate gathering. In segment mode, "composing" may be several syllables and
-        // we want to expose compound (multi-syllable) matches with their consumed-count
-        // metadata so that onPickCandidate can peel the right prefix. In the other two
-        // modes, composing is always a single syllable and we fall back to the original
-        // flat lookup.
+        // Shorthand: only kicks in when the current tail has NO space yet (i.e. the user
+        // is building up a single "cluster" like "qg"), is entirely consonantal, and can
+        // be greedily split into ≥ 2 legal Vietnamese onsets.
+        val shorthandEnabled = prefs.getBoolean("pref_shorthand", true)
+        val segments = if (shorthandEnabled) tryShorthandSplit(composing) else null
+        shorthandActive = segments != null
+        shorthandSegments = segments ?: emptyList()
+
+        // Build the candidate-bar preview of the composing text: shorthand uses ' between
+        // segments so the user can see the decomposition at a glance.
+        val composingForBar = if (shorthandActive) {
+            val tail = segments!!.joinToString("'")
+            if (lockedPrefix.isEmpty()) tail else lockedPrefix + " " + tail
+        } else {
+            composingDisplay()
+        }
+        candidateBar.setComposing(composingForBar)
+
+        // Candidate gathering.
+        //   shorthandActive -> use initials-based lookup (compound by initials + first-
+        //                      segment single chars for segment-picking).
+        //   segmentMode && composing has syllable separators -> existing segment logic.
+        //   otherwise                                         -> plain flat lookup, with
+        //                                                        optional "single-only"
+        //                                                        filter applied for
+        //                                                        single-syllable input.
         val segmentMode = prefs.getString("pref_space_behavior", "segment") == "segment"
-        if (segmentMode && composing.isNotEmpty()) {
+        if (shorthandActive) {
+            val (texts, consumed) = gatherShorthandCandidates(segments!!)
+            currentCandidates = texts
+            currentCandidateConsumed = consumed
+        } else if (segmentMode && composing.isNotEmpty() && composing.contains(' ')) {
             val (texts, consumed) = gatherSegmentCandidates(composing)
             currentCandidates = texts
             currentCandidateConsumed = consumed
         } else {
-            val flat = NomDictionary.lookup(composing.trim())
+            val singleOnly = prefs.getBoolean("pref_single_syl_single_char_only", false)
+            val isSingleSyllable = !composing.contains(' ')
+            val flat = if (singleOnly && isSingleSyllable) {
+                // Single-syllable-only mode: restrict to single-character hits so we
+                // never surface compounds like 國家 just because the user typed "qu".
+                //
+                // Fallbacks in order so that partial typing still gets candidates:
+                //   1. exact single-syllable lookup on the current buffer
+                //   2. prefix match on the ascii single-syllable index so typing just
+                //      "q" surfaces every single-char Nom whose reading begins with q.
+                // Step 2 is essential or the bar would be empty until the user finished
+                // a full syllable, which felt broken.
+                val trimmed = composing.trim()
+                val merged = LinkedHashSet<String>()
+                merged.addAll(NomDictionary.lookupSingle(trimmed))
+                merged.addAll(NomDictionary.lookupSinglePrefix(trimmed))
+                merged.toList()
+            } else {
+                NomDictionary.lookup(composing.trim())
+            }
             val ordered = flat.sortedWith(
                 compareByDescending<String> { recentCounts.getOrDefault(it, 0) }
                     .thenByDescending { NgramModel.score(it) }
@@ -599,6 +739,131 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         }
         candidateBar.setCandidates(currentCandidates)
         candidateBar.visibility = if (showCandidate) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * Attempt to split [raw] into a sequence of ≥ 2 "syllable prefix" segments for
+     * viết tắt (abbreviated-input) mode.
+     *
+     * Activation gate: [raw] must contain no whitespace, be at least 2 letters long,
+     * contain only ascii letters after diacritic stripping, and NOT be a prefix of
+     * any ascii single-syllable key. The last clause is what makes viet-tat safe to
+     * run on every keystroke: any input that is still a plausible start of a real
+     * Vietnamese syllable (e.g. "qu", "ngh", "an") is left alone, only inputs like
+     * "qg", "nma", "tsao", "nhma" – which cannot continue into a real syllable –
+     * trigger the split.
+     *
+     * Split strategy (left-to-right greedy at each position i):
+     *   1. Longest ascii single-syllable key K with raw.startsWith(K, i) – swallow K.
+     *   2. Otherwise longest multi-letter consonant onset with raw.startsWith(o, i) –
+     *      swallow o.
+     *   3. Otherwise swallow a single letter.
+     * Examples (assuming usual Vietnamese dictionary coverage):
+     *   "qg"    -> ["q", "g"]
+     *   "tsao"  -> ["t", "sao"]        (sao is a real syllable, swallowed whole)
+     *   "nma"   -> ["n", "ma"]
+     *   "nhma"  -> ["nh", "ma"]         (nh is a multi-letter onset)
+     *   "nc"    -> ["n", "c"]
+     *
+     * Returns null if the activation gate fails or the split collapses to < 2
+     * segments (which would be a single onset – not really abbreviated input).
+     */
+    private fun tryShorthandSplit(raw: String): List<String>? {
+        if (raw.length < 2 || raw.contains(' ')) return null
+        val asciiLower = NomDictionary.stripDiacritics(raw.lowercase())
+        for (c in asciiLower) {
+            if (c !in 'a'..'z') return null
+        }
+        // Gate: if asciiLower is itself a prefix of any single-syllable ascii key, the
+        // user is just mid-syllable on a normal word. [NomDictionary.hasAsciiSinglePrefix]
+        // returns true for things like "q" (prefix of "quan", "quoc"…) or "an" (prefix of
+        // "anh", "an") so we never hijack those. For "qg", "nma", "tsao" etc. it returns
+        // false and we proceed.
+        if (NomDictionary.hasAsciiSinglePrefix(asciiLower)) return null
+
+        // Multi-letter consonant onsets, longest-first so "ngh" beats "ng" beats "n".
+        // Kept intentionally tight (no "qu"/"gi" – those imply a vowel will follow, which
+        // the activation gate has already ruled out).
+        val multiOnsets = arrayOf("ngh", "ng", "nh", "ph", "th", "tr", "ch", "gh", "kh")
+        val segments = ArrayList<String>()
+        var i = 0
+        while (i < asciiLower.length) {
+            // Step 1: longest ascii-single syllable key at position i.
+            var syllableMatch: String? = null
+            // Cheap upper bound: a real Vietnamese syllable is ≤ ~7 ascii chars ("nghieng").
+            val maxLen = kotlin.math.min(asciiLower.length - i, 8)
+            for (len in maxLen downTo 2) {
+                val sub = asciiLower.substring(i, i + len)
+                if (NomDictionary.isAsciiSingleKey(sub)) {
+                    syllableMatch = sub; break
+                }
+            }
+            if (syllableMatch != null) {
+                segments.add(syllableMatch); i += syllableMatch.length; continue
+            }
+            // Step 2: multi-letter consonant onset.
+            var onsetMatch: String? = null
+            for (o in multiOnsets) {
+                if (asciiLower.startsWith(o, i)) { onsetMatch = o; break }
+            }
+            if (onsetMatch != null) {
+                segments.add(onsetMatch); i += onsetMatch.length; continue
+            }
+            // Step 3: single letter.
+            segments.add(asciiLower.substring(i, i + 1)); i += 1
+        }
+        if (segments.size < 2) return null
+        return segments
+    }
+
+    /**
+     * Build candidates for viết tắt (viet-tat) mode. For a segmentation of length N we surface:
+     *   - compound words whose syllables segment-prefix-match segments[0..k-1] for
+     *     k = N downTo 2 (see [NomDictionary.lookupWordByVietTat] for the semantics),
+     *   - single-character candidates whose ascii syllable starts with segments[0]
+     *     (consumed = 1, i.e. "pick just the first segment now, continue picking the
+     *     rest afterwards").
+     *
+     * Partial picks can span multiple segments of different widths, so the [consumed]
+     * array carries the *syllable count* of the pick and the matching number of raw
+     * characters is recomputed from [shorthandSegments] at pick time via
+     * [segmentsCharLen].
+     *
+     * Duplicates are resolved by keeping the LARGEST consumed value so the user can
+     * pick the longest-matching interpretation in one tap. Sorting is the same as
+     * segment mode: (consumed desc, recency desc, n-gram score desc).
+     */
+    private fun gatherShorthandCandidates(segments: List<String>): Pair<List<String>, IntArray> {
+        if (segments.size < 2) return Pair(emptyList(), IntArray(0))
+        val consumedFor = LinkedHashMap<String, Int>()
+        for (k in segments.size downTo 2) {
+            val prefix = segments.subList(0, k)
+            for ((_, values) in NomDictionary.lookupWordByVietTat(prefix)) {
+                for (v in values) {
+                    val prev = consumedFor[v]
+                    if (prev == null || prev < k) consumedFor[v] = k
+                }
+            }
+        }
+        // First-segment singles: every Nom character whose ascii syllable starts with
+        // segments[0]. Tagged with consumed=1 so picking one keeps the remainder live
+        // as a smaller viet-tat cluster (or a single leftover segment if only one
+        // segment remains afterwards).
+        for (hit in NomDictionary.lookupSinglePrefix(segments[0])) {
+            if (!consumedFor.containsKey(hit)) consumedFor[hit] = 1
+        }
+        val entries = consumedFor.entries.toList().sortedWith(
+            compareByDescending<Map.Entry<String, Int>> { it.value }
+                .thenByDescending { recentCounts.getOrDefault(it.key, 0) }
+                .thenByDescending { NgramModel.score(it.key) }
+        )
+        val texts = ArrayList<String>(entries.size)
+        val consumed = IntArray(entries.size)
+        for ((idx, e) in entries.withIndex()) {
+            texts.add(e.key)
+            consumed[idx] = e.value
+        }
+        return Pair(texts, consumed)
     }
 
     /**
@@ -719,6 +984,11 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
      */
     private fun learnUserPhrases(steps: List<LockedStep>) {
         if (steps.isEmpty()) return
+        // Drop any step that was produced by shorthand-mode picking – those have no
+        // real Vietnamese reading we can key on. If the whole composition was
+        // shorthand, there is nothing to learn here.
+        val cleanSteps = steps.filter { !it.isShorthand && it.rawConsumed.isNotEmpty() }
+        if (cleanSteps.isEmpty()) return
         val ctx = applicationContext
         // Make sure the user dictionary is loaded before we attempt to read it for merging.
         UserDictionary.ensureLoaded(ctx)
@@ -730,18 +1000,18 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         data class Sub(val key: String, val nom: String)
         val subs = ArrayList<Sub>()
         // Always include the full phrase first.
-        val fullKey = steps.joinToString(" ") { it.rawConsumed.trim() }
+        val fullKey = cleanSteps.joinToString(" ") { it.rawConsumed.trim() }
             .replace(Regex("\\s+"), " ").trim().lowercase()
-        val fullNom = steps.joinToString("") { it.nomText }
+        val fullNom = cleanSteps.joinToString("") { it.nomText }
         if (fullKey.isNotEmpty() && fullNom.isNotEmpty()) subs.add(Sub(fullKey, fullNom))
         // Then every shorter contiguous subsequence of length 2..min(steps.size-1, ngramN).
         // Length 1 is skipped (single picks are bundled-dict hits; no point duplicating).
-        val maxSubLen = kotlin.math.min(steps.size - 1, ngramN)
+        val maxSubLen = kotlin.math.min(cleanSteps.size - 1, ngramN)
         for (len in maxSubLen downTo 2) {
-            for (start in 0..steps.size - len) {
+            for (start in 0..cleanSteps.size - len) {
                 // Skip the [0, steps.size) range – already added above as full phrase.
-                if (start == 0 && len == steps.size) continue
-                val segment = steps.subList(start, start + len)
+                if (start == 0 && len == cleanSteps.size) continue
+                val segment = cleanSteps.subList(start, start + len)
                 val key = segment.joinToString(" ") { it.rawConsumed.trim() }
                     .replace(Regex("\\s+"), " ").trim().lowercase()
                 val nom = segment.joinToString("") { it.nomText }
@@ -794,6 +1064,8 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         lockedHistory.clear()
         currentCandidates = emptyList()
         currentCandidateConsumed = IntArray(0)
+        shorthandActive = false
+        shorthandSegments = emptyList()
         candidateBar.clear()
         currentInputConnection?.finishComposingText()
         maybeAutoShift()
@@ -806,6 +1078,8 @@ class NomInputMethodService : InputMethodService(), KeyboardView.KeyActionListen
         lockedHistory.clear()
         currentCandidates = emptyList()
         currentCandidateConsumed = IntArray(0)
+        shorthandActive = false
+        shorthandSegments = emptyList()
         if (::candidateBar.isInitialized) candidateBar.clear()
         currentInputConnection?.finishComposingText()
     }
